@@ -128,6 +128,10 @@ const de = {
   "menu.title": "Menü",
   "menu.openOutput": "Ausgabefenster öffnen",
   "menu.openOutputHint": "Für Laptop + Beamer: Das Fenster auf den Beamer ziehen und anklicken für Vollbild.",
+  "menu.externalDisplay": "Beamer",
+  "menu.externalDisplayHint":
+    "Schließe den Beamer per Kabel oder AirPlay an. Die Projektion erscheint dort automatisch, das iPad behält den Editor. Ohne eigenes Bild wird der Bildschirm gespiegelt: dann den Show-Modus nutzen.",
+  "menu.externalDisplayConnected": "Beamer verbunden: Die Projektion läuft dort.",
   "menu.aspect": "Bildformat des Beamers",
   "menu.language": "Sprache",
   "menu.export": "Projekt speichern",
@@ -141,7 +145,7 @@ const de = {
   "sensors.connected": "Verbunden mit {name}",
   "sensors.notConnected": "Keine senseBox verbunden",
   "sensors.unsupported":
-    "Dieser Browser kann kein Bluetooth (Web Bluetooth). Safari auf dem iPad unterstützt das leider nicht. Nutze Chrome oder Edge auf einem Laptop.",
+    "Dieser Browser kann kein Bluetooth (Web Bluetooth). Safari auf dem iPad unterstützt das leider nicht. Nutze die Lichtwerk-App auf dem iPad oder Chrome bzw. Edge auf einem Laptop.",
   "sensors.noValue": "–",
   "sensors.error": "Verbindung fehlgeschlagen: {msg}",
   "sensors.hint": "Tipp: Puste auf den Sensor oder klatsche – welcher Wert springt?",
@@ -395,6 +399,10 @@ const en: Dict = {
   "menu.title": "Menu",
   "menu.openOutput": "Open output window",
   "menu.openOutputHint": "For laptop + projector: drag the window onto the projector and click it for fullscreen.",
+  "menu.externalDisplay": "Projector",
+  "menu.externalDisplayHint":
+    "Connect the projector by cable or AirPlay. The projection appears there automatically and the iPad keeps the editor. If the screen is only mirrored, use Show mode.",
+  "menu.externalDisplayConnected": "Projector connected: the projection runs there.",
   "menu.aspect": "Projector aspect ratio",
   "menu.language": "Language",
   "menu.export": "Save project",
@@ -408,7 +416,7 @@ const en: Dict = {
   "sensors.connected": "Connected to {name}",
   "sensors.notConnected": "No senseBox connected",
   "sensors.unsupported":
-    "This browser can't use Bluetooth (Web Bluetooth). Safari on iPad doesn't support it. Use Chrome or Edge on a laptop.",
+    "This browser can't use Bluetooth (Web Bluetooth). Safari on iPad doesn't support it. Use the Lichtwerk app on the iPad or Chrome or Edge on a laptop.",
   "sensors.noValue": "–",
   "sensors.error": "Connection failed: {msg}",
   "sensors.hint": "Tip: blow on the sensor or clap – which value jumps?",

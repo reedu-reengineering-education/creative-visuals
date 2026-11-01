@@ -70,7 +70,11 @@ function useRuntimeDriver() {
           break;
         case "pong":
           lastPong = Date.now();
-          if (!useRuntime.getState().outputConnected) useRuntime.getState().setOutputConnected(true);
+          // the output was there before the editor (e.g. the iOS app started with a projector attached)
+          if (!useRuntime.getState().outputConnected) {
+            useRuntime.getState().setOutputConnected(true);
+            sendAll();
+          }
           break;
         case "key":
           pressKey(m.key);

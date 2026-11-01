@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Lichtwerk: projection mapping for kids (8–16). Kids trace real objects on a tablet, give the strokes light effects, and program them with Blockly blocks. Optional senseBox sensors over Web Bluetooth make the light react to the room. Next.js App Router + TypeScript + Blockly + zustand. Everything runs client-side; there is no backend.
+Lichtwerk: projection mapping for kids (8–16). Kids trace real objects on a tablet, give the strokes light effects, and program them with Blockly blocks. Optional senseBox sensors over Web Bluetooth make the light react to the room. Next.js App Router + TypeScript + Blockly + zustand. Everything runs client-side; there is no backend. The same app is wrapped as an iOS app with Capacitor (`ios/`) for Bluetooth and a separate projector output on the iPad.
 
 UI language is German first (`de` is the master dictionary), English second. Target devices: iPad (Safari) mirrored to a projector, or laptop + separate output window.
 
@@ -15,9 +15,12 @@ npm run dev          # http://localhost:3000
 npm run typecheck    # tsc --noEmit — the only automated check
 npm run build
 npm run start -- -H 0.0.0.0   # serve on the LAN for a workshop
+npm run build:ios    # LICHTWERK_EXPORT=1 next build (static export into out/) + cap sync ios
+npm run ios          # open the Xcode project
+CAP_SERVER_URL=http://<ip>:3000 npx cap run ios   # iOS app with live reload from npm run dev
 ```
 
-There are no tests and no linter. Verify changes with `npm run typecheck` and by running the app. `next.config.ts` has `allowedDevOrigins` for testing from an iPad on the LAN. Web Bluetooth and PWA install need HTTPS or `localhost`.
+There are no tests and no linter. Verify changes with `npm run typecheck` and by running the app. Native changes: build the `App` scheme in Xcode (or `xcodebuild`). `next.config.ts` has `allowedDevOrigins` for testing from an iPad on the LAN. Web Bluetooth and PWA install need HTTPS or `localhost`.
 
 ## Architecture
 
@@ -64,15 +67,17 @@ Input for programs must work on every setup: an iPad in Show mode has no keyboar
 ### Editor ↔ output window
 `/output` (`OutputView.tsx`) only renders. The editor owns project, program and sensors and pushes them over `BroadcastChannel("lichtwerk")` (`src/lib/sync.ts`); the output sends back key presses. Messages are designed to go over a network relay later (iPad editor → laptop output is planned, not built).
 
+In the iOS app `openChannel` uses native transports instead. A connected display (cable or AirPlay) gets its own scene with role `windowExternalDisplayNonInteractive` (`AppDelegate.swift` → `ExternalDisplaySceneDelegate` in `ios/App/App/ExternalDisplay.swift`), which shows a plain WKWebView (no Capacitor bridge) loading `output.html` (Capacitor's router sends extension-less paths like `/output` to `index.html`). It sets `window.__lichtwerkOutput` (`isNativeOutput()`); the editor talks to it through the app-local `ExternalDisplay` plugin (`src/lib/externalDisplay.ts`, registered in `MainViewController.swift`): editor → `send({json})` → `evaluateJavaScript("__lichtwerkReceive(…)")`, output → `webkit.messageHandlers.lichtwerk` → `message` event. The editor answers a `pong` from an unknown output with a full resync, because the display can be there before the editor loads. In the app the menu shows a projector hint instead of "Open output window".
+
 ### Sensors (`src/lib/sensors.ts`)
-The BLE profile follows senseBox:bike: service `cf06a218-f68e-e0be-ad04-8ebc1eb0bc84`, device name prefix `senseBox`, one notify characteristic per phenomenon, payload = float32 little-endian values (one channel per float). Known characteristics map to channels in `CHARACTERISTICS`. Unknown ones are added at runtime as "Sensor XXXX" channels. Loudness has `uuid: null` until the firmware sends it. Safari on iPadOS has no Web Bluetooth.
+BLE goes through `@capacitor-community/bluetooth-le` (`BleClient`): Web Bluetooth in the browser, CoreBluetooth in the iOS app (native device list, German strings in `capacitor.config.ts`). The BLE profile follows senseBox:bike: service `cf06a218-f68e-e0be-ad04-8ebc1eb0bc84`, device name prefix `senseBox`, one notify characteristic per phenomenon, payload = float32 little-endian values (one channel per float). Known characteristics map to channels in `CHARACTERISTICS`. Unknown ones are added at runtime as "Sensor XXXX" channels. Loudness has `uuid: null` until the firmware sends it. Safari on iPadOS has no Web Bluetooth; the iOS app has.
 
 ### i18n (`src/lib/i18n.ts`)
 `en` is typed as `typeof de`, so every new key must be added to both dictionaries or typecheck fails. Use `useT()` in components (re-renders on language change) and `t()` outside React (Blockly definitions, stores).
 
 ### Decisions to respect
 These were settled with the user. Don't reopen them without being asked:
-- Web app only. **No Capacitor**, no Flutter. A thin hand-written Swift wrapper is the fallback idea for iPad-only setups.
+- Web app first. **Capacitor only as an optional iOS shell** (BLE via `@capacitor-community/bluetooth-le`, projector output via an external display scene); the web version must keep working without it. No Flutter, no native rewrite. `next.config.ts` exports statically only when `LICHTWERK_EXPORT=1`, so `npm run start` keeps working.
 - Blockly, not a node editor.
 - Kids trace live in projector space (no photo tracing, no calibration or warping), freehand with automatic cleanup.
 - Groups are pen colours named by the kids, not fixed labels.
@@ -81,11 +86,11 @@ These were settled with the user. Don't reopen them without being asked:
 - Custom Blockly renderer (a `zelos` subclass in `blocks/defs.ts`) plus visual grid pickers (`blocks/gridFields.tsx`) instead of long text dropdowns.
 
 ### Hardware constraints
-- Safari on iPadOS (and every iPad browser) has no Web Bluetooth, so BLE works only in Chrome/Edge on a laptop, Android or ChromeOS. Workarounds discussed: the laptop as a BLE hub, a Wi-Fi/MQTT bridge, the Bluefy/WebBLE browsers, or a native Swift wrapper.
-- A real second screen from iPad Safari needs Stage Manager on an M1+ iPad.
+- Safari on iPadOS (and every iPad browser) has no Web Bluetooth, so in the browser BLE works only in Chrome/Edge on a laptop, Android or ChromeOS. On the iPad the iOS app covers it (needs an Apple Developer account and TestFlight/MDM to get onto school iPads).
+- A real second screen from iPad Safari needs Stage Manager on an M1+ iPad. The iOS app gets a separate output on any iPad through the external display scene. Untested: whether that scene arrives with `UIApplicationSupportsMultipleScenes` = NO (if not, set it to YES), and how it behaves with Stage Manager in "extend" mode. A second app window for Stage Manager (`requestSceneSessionActivation`) is not built.
 - An iPad mirrors to the projector, so the UI itself is projected. That is why the UI is dark ("black = no light") and why Show mode exists.
 - Everything uses pointer events with `touch-action: none` on canvases and tracks. Long-press is 550 ms. A two-finger tap leaves Show mode.
-- Nothing has been tested on a real iPad, projector or senseBox yet. Testing so far was headless Chromium at iPad size.
+- Nothing has been tested on a real iPad, projector or senseBox yet. Testing so far was headless Chromium at iPad size. The iOS app compiles but has not run on a device or simulator yet.
 
 ### Pending product decisions (ask before changing)
 - Should a group go dark ("off") outside its clips (the current behaviour) or fall back to plain lines?
@@ -104,7 +109,7 @@ These were settled with the user. Don't reopen them without being asked:
 - Editing the program while it runs restarts it, which also resets all variables.
 
 ### Tried and dropped
-- **Capacitor, Flutter, pure native iOS:** the web covers laptops too and matches the team's skills.
+- **Flutter, pure native iOS, Capacitor as the main platform:** the web covers laptops too and matches the team's skills. (Capacitor came back as an optional iOS shell, see above.)
 - **Node-based visual programming:** Blockly fits the learning goal better.
 - **Tracing on a photo:** perspective mismatch.
 - **Polygon/point tracing:** too fiddly.

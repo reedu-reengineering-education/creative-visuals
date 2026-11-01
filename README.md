@@ -85,11 +85,22 @@ npm run start -- -H 0.0.0.0      # open http://<laptop-ip>:3000 on the iPads
 
 Projects are saved in the browser automatically and can be exported or imported as JSON from the menu.
 
+### iPad app
+
+The same web app also ships as an iOS app (Capacitor), so the senseBox works over Bluetooth on the iPad and a projector can show the output on its own. Building it needs a Mac with Xcode.
+
+```bash
+npm run build:ios                # static export into out/ + cap sync ios
+npm run ios                      # open the Xcode project, then run it on an iPad
+CAP_SERVER_URL=http://<laptop-ip>:3000 npx cap run ios   # live reload from npm run dev
+```
+
 ## Setups
 
 | Setup | How |
 | :-- | :-- |
 | **iPad + projector** | Mirror the iPad. Works on every iPad; the dark interface keeps the wall dark, and Show mode gives the clean result. |
+| **iPad app + projector** | Connect the projector by cable or AirPlay. The output appears there on its own while the iPad keeps the editor. |
 | **Laptop + projector** | Menu → *Open output window*. Chrome and Edge place it on the second screen; editor and output stay in sync. |
 | **iPad + laptop output** | Planned. Needs a small network relay. |
 
@@ -98,7 +109,7 @@ Projects are saved in the browser automatically and can be exported or imported 
 The Bluetooth profile follows **senseBox:bike**: one characteristic per phenomenon, float32 values. Temperature, humidity, fine dust, distance and acceleration are mapped in [`src/lib/sensors.ts`](src/lib/sensors.ts); unknown characteristics still show up as "Sensor XXXX".
 
 > [!IMPORTANT]
-> Safari on iPadOS has no Web Bluetooth. Connect the senseBox from Chrome or Edge on a laptop (or Android/ChromeOS).
+> Safari on iPadOS has no Web Bluetooth. On the iPad use the app; in the browser connect the senseBox from Chrome or Edge on a laptop (or Android/ChromeOS).
 
 ## Status
 

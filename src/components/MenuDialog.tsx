@@ -4,13 +4,15 @@ import { useRef, useState } from "react";
 import { useProject } from "@/lib/store";
 import { useLang, useT, type Lang } from "@/lib/i18n";
 import { openOutputWindow } from "@/lib/sync";
-import { stopProgram } from "@/lib/runtime";
+import { stopProgram, useRuntime } from "@/lib/runtime";
+import { isNativeApp } from "@/lib/externalDisplay";
 import type { Aspect, Project } from "@/lib/types";
 import Dialog from "./Dialog";
 
 export default function MenuDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
   const aspect = useProject((s) => s.project.aspect);
+  const outputConnected = useRuntime((s) => s.outputConnected);
   const setAspect = useProject((s) => s.setAspect);
   const lang = useLang((s) => s.lang);
   const setLang = useLang((s) => s.setLang);
@@ -41,19 +43,26 @@ export default function MenuDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog title={t("menu.title")} onClose={onClose} closeLabel={t("menu.close")}>
-      <div className="section">
-        <button
-          className="primary"
-          style={{ alignSelf: "flex-start" }}
-          onClick={() => {
-            void openOutputWindow();
-            onClose();
-          }}
-        >
-          {t("menu.openOutput")}
-        </button>
-        <p className="muted">{t("menu.openOutputHint")}</p>
-      </div>
+      {isNativeApp() ? (
+        <div className="section">
+          <p className="lbl">{t("menu.externalDisplay")}</p>
+          <p className="muted">{t(outputConnected ? "menu.externalDisplayConnected" : "menu.externalDisplayHint")}</p>
+        </div>
+      ) : (
+        <div className="section">
+          <button
+            className="primary"
+            style={{ alignSelf: "flex-start" }}
+            onClick={() => {
+              void openOutputWindow();
+              onClose();
+            }}
+          >
+            {t("menu.openOutput")}
+          </button>
+          <p className="muted">{t("menu.openOutputHint")}</p>
+        </div>
+      )}
 
       <div className="section">
         <p className="lbl">{t("menu.aspect")}</p>

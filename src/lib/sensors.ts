@@ -1,6 +1,8 @@
 "use client";
 
 import { create } from "zustand";
+import { Capacitor } from "@capacitor/core";
+import { BleClient } from "@capacitor-community/bluetooth-le";
 import { t, type TKey } from "./i18n";
 
 /**
@@ -9,7 +11,7 @@ import { t, type TKey } from "./i18n";
  * Every characteristic sends one or more float32 values (little endian) via notify.
  */
 export const SENSEBOX_SERVICE_UUID = "cf06a218-f68e-e0be-ad04-8ebc1eb0bc84";
-export const DEVICE_NAME_PREFIXES = ["senseBox"];
+export const DEVICE_NAME_PREFIX = "senseBox";
 
 export interface SensorChannel {
   id: string;
@@ -124,11 +126,13 @@ export function allChannels(): SensorChannel[] {
   return [...KNOWN_CHANNELS, ...useSensors.getState().discovered];
 }
 
+/** Web Bluetooth in Chrome/Edge, CoreBluetooth in the iOS app (both through the same plugin). */
 export function bluetoothSupported(): boolean {
+  if (Capacitor.isNativePlatform()) return true;
   return typeof navigator !== "undefined" && "bluetooth" in navigator;
 }
 
-let device: BluetoothDevice | null = null;
+let deviceId: string | null = null;
 
 function parseFloats(view: DataView): number[] {
   const out: number[] = [];
@@ -136,57 +140,69 @@ function parseFloats(view: DataView): number[] {
   return out;
 }
 
+function onValues(uuid: string, def: CharacteristicDef | undefined, view: DataView) {
+  const values = parseFloats(view);
+  values.forEach((v, i) => {
+    if (!Number.isFinite(v)) return;
+    let channelId: string;
+    if (def && def.channels[i]) {
+      channelId = def.channels[i].id;
+    } else {
+      // unknown characteristic: still show it, kids can find out what it is
+      const short = uuid.slice(0, 4).toUpperCase();
+      channelId = `ble_${uuid.slice(0, 8)}_${i}`;
+      useSensors.getState().addDiscovered({
+        id: channelId,
+        label: t("sensor.unknown", { id: values.length > 1 ? `${short}.${i + 1}` : short }),
+        unit: "",
+        min: 0,
+        max: 100,
+      });
+    }
+    useSensors.getState().setValue(channelId, v);
+  });
+}
+
+/** The user closed the chooser: Chrome throws NotFoundError, the iOS plugin "requestDevice cancelled." */
+function isCancel(e: unknown): boolean {
+  if (e instanceof DOMException && e.name === "NotFoundError") return true;
+  return e instanceof Error && /cancel/i.test(e.message);
+}
+
 export async function connectSenseBox(): Promise<void> {
   const store = useSensors.getState();
-  if (!bluetoothSupported()) throw new Error("Web Bluetooth not supported");
+  if (!bluetoothSupported()) throw new Error("Bluetooth not supported");
   store.setStatus("connecting");
   try {
-    device = await navigator.bluetooth.requestDevice({
-      filters: DEVICE_NAME_PREFIXES.map((namePrefix) => ({ namePrefix })),
+    await BleClient.initialize();
+    const device = await BleClient.requestDevice({
+      namePrefix: DEVICE_NAME_PREFIX,
       optionalServices: [SENSEBOX_SERVICE_UUID],
     });
-    device.addEventListener("gattserverdisconnected", () => {
+    deviceId = device.deviceId;
+    await BleClient.connect(device.deviceId, () => {
+      deviceId = null;
       useSensors.getState().setStatus("idle", { deviceName: null });
     });
-    const server = await device.gatt!.connect();
-    const service = await server.getPrimaryService(SENSEBOX_SERVICE_UUID);
-    const characteristics = await service.getCharacteristics();
+    const services = await BleClient.getServices(device.deviceId);
+    const service = services.find((s) => s.uuid.toLowerCase() === SENSEBOX_SERVICE_UUID);
+    if (!service) throw new Error("senseBox service not found");
 
-    for (const ch of characteristics) {
+    for (const ch of service.characteristics) {
       if (!ch.properties.notify) continue;
       const uuid = ch.uuid.toLowerCase();
       const def = CHARACTERISTICS.find((c) => c.uuid === uuid);
-      ch.addEventListener("characteristicvaluechanged", () => {
-        const view = ch.value;
-        if (!view) return;
-        const values = parseFloats(view);
-        values.forEach((v, i) => {
-          if (!Number.isFinite(v)) return;
-          let channelId: string;
-          if (def && def.channels[i]) {
-            channelId = def.channels[i].id;
-          } else {
-            // unknown characteristic: still show it, kids can find out what it is
-            const short = uuid.slice(0, 4).toUpperCase();
-            channelId = `ble_${uuid.slice(0, 8)}_${i}`;
-            useSensors.getState().addDiscovered({
-              id: channelId,
-              label: t("sensor.unknown", { id: values.length > 1 ? `${short}.${i + 1}` : short }),
-              unit: "",
-              min: 0,
-              max: 100,
-            });
-          }
-          useSensors.getState().setValue(channelId, v);
-        });
-      });
-      await ch.startNotifications();
+      await BleClient.startNotifications(device.deviceId, SENSEBOX_SERVICE_UUID, ch.uuid, (view) =>
+        onValues(uuid, def, view),
+      );
     }
     useSensors.getState().setStatus("connected", { deviceName: device.name ?? "senseBox" });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (deviceId) void BleClient.disconnect(deviceId).catch(() => {});
+    deviceId = null;
     // user closed the chooser -> just go back to idle
-    if (e instanceof DOMException && e.name === "NotFoundError") {
+    if (isCancel(e)) {
       useSensors.getState().setStatus("idle");
       return;
     }
@@ -196,11 +212,7 @@ export async function connectSenseBox(): Promise<void> {
 }
 
 export function disconnectSenseBox() {
-  try {
-    device?.gatt?.disconnect();
-  } catch {
-    /* ignore */
-  }
-  device = null;
+  if (deviceId) void BleClient.disconnect(deviceId).catch(() => {});
+  deviceId = null;
   useSensors.getState().setStatus("idle", { deviceName: null });
 }
