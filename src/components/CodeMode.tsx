@@ -6,15 +6,31 @@ import * as De from "blockly/msg/de";
 import * as En from "blockly/msg/en";
 import { useProject } from "@/lib/store";
 import { useLang, useT } from "@/lib/i18n";
-import { useRuntime } from "@/lib/runtime";
+import { formatValue, useRuntime } from "@/lib/runtime";
 import { programToCode, type Script } from "@/lib/program";
 import { allChannels, channelLabel } from "@/lib/sensors";
 import { renderStage } from "@/lib/render";
 import { aspectRatio } from "@/lib/store";
-import { lichtwerkTheme, registerBlocks, registerRenderer, toolbox } from "./blocks/defs";
-import { emptyProgram } from "@/lib/timeline";
-import { workspaceToScripts } from "./blocks/compile";
+import {
+  NEW_VARIABLE_BUTTON,
+  VARIABLES_CATEGORY,
+  lichtwerkTheme,
+  registerBlocks,
+  registerRenderer,
+  toolbox,
+  variablesFlyout,
+} from "./blocks/defs";
+import { emptyProgram, isTimelineHat } from "@/lib/timeline";
+import { compileProgramJson, variablesOf } from "@/lib/blockJson";
 import Dialog from "./Dialog";
+import ButtonPad from "./ButtonPad";
+
+const compile = (ws: Blockly.Workspace) => compileProgramJson(Blockly.serialization.workspaces.save(ws), isTimelineHat);
+
+/** Blocks that only check their condition once when they're not inside a loop. */
+const IF_TYPES = new Set(["lw_if_then", "lw_if_then_else"]);
+const LOOP_TYPES = new Set(["lw_forever", "lw_repeat", "lw_repeat_until"]);
+const ONCE_ROOTS = new Set(["lw_on_start", "lw_on_key", "lw_on_button", "lw_when", "lw_while"]);
 
 /** The Blockly editor. Saves the workspace into the project and restarts a running program on changes. */
 export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean; onCloseCode: () => void }) {
@@ -41,6 +57,8 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
     });
     host.classList.add("lichtwerk-blockly");
     wsRef.current = ws;
+    ws.registerToolboxCategoryCallback(VARIABLES_CATEGORY, variablesFlyout);
+    ws.registerButtonCallback(NEW_VARIABLE_BUTTON, (b) => Blockly.Variables.createVariableButtonHandler(b.getTargetWorkspace()));
 
     const program = useProject.getState().project.program ?? emptyProgram();
     try {
@@ -48,7 +66,7 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
     } catch (e) {
       console.warn("[lichtwerk] could not load program", e);
     }
-    setScripts(workspaceToScripts(ws));
+    setScripts(compile(ws));
     if (!useProject.getState().project.program) {
       useProject.getState().setProgram(Blockly.serialization.workspaces.save(ws));
     }
@@ -59,15 +77,14 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
      */
     const updateHints = () => {
       for (const b of ws.getAllBlocks(false)) {
-        if (b.type !== "lw_if" && b.type !== "lw_if_else") continue;
+        if (!IF_TYPES.has(b.type)) continue;
         let looped = false;
         let p = b.getSurroundParent();
         while (p) {
-          if (p.type === "lw_forever" || p.type === "lw_repeat") looped = true;
+          if (LOOP_TYPES.has(p.type)) looped = true;
           p = p.getSurroundParent();
         }
-        const root = b.getRootBlock();
-        const once = !looped && (root.type === "lw_on_start" || root.type === "lw_on_key" || root.type === "lw_on_tap");
+        const once = !looped && ONCE_ROOTS.has(b.getRootBlock().type);
         b.setWarningText(once ? t("hint.ifOnce") : null);
       }
     };
@@ -80,7 +97,7 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
         useProject.getState().setProgram(Blockly.serialization.workspaces.save(ws));
-        setScripts(workspaceToScripts(ws));
+        setScripts(compile(ws));
       }, 400);
     };
     ws.addChangeListener(onChange);
@@ -98,14 +115,21 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
 
   const running = useRuntime((s) => s.running);
   const groups = useProject((s) => s.project.groups);
+  const program = useProject((s) => s.project.program);
+  const variables = variablesOf(program);
 
-  const code = programToCode(scripts, {
-    group: (id) => groups.find((g) => g.id === id)?.name ?? "?",
-    sensor: (id) => {
-      const c = allChannels().find((x) => x.id === id);
-      return c ? channelLabel(c) : id;
+  const code = programToCode(
+    scripts,
+    {
+      group: (id) => groups.find((g) => g.id === id)?.name ?? "?",
+      sensor: (id) => {
+        const c = allChannels().find((x) => x.id === id);
+        return c ? channelLabel(c) : id;
+      },
+      variable: (id) => variables.find((v) => v.id === id)?.name ?? "?",
     },
-  });
+    variables.map((v) => v.id),
+  );
 
   return (
     <>
@@ -122,6 +146,8 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
           </p>
         </div>
         <PreviewCanvas />
+        <ButtonPad scripts={scripts} />
+        <VariableMonitor variables={variables} />
       </section>
 
       {showCode && (
@@ -170,4 +196,22 @@ function PreviewCanvas() {
     return () => cancelAnimationFrame(raf);
   }, []);
   return <canvas ref={ref} width={272} height={153} />;
+}
+
+/** Current values of the variables while the program runs – helps to find mistakes. */
+function VariableMonitor({ variables }: { variables: { id: string; name: string }[] }) {
+  const t = useT();
+  const values = useRuntime((s) => s.vars);
+  const running = useRuntime((s) => s.running);
+  if (!variables.length) return null;
+  return (
+    <div className="var-monitor" aria-label={t("vars.title")}>
+      {variables.map((v) => (
+        <span key={v.id} className="var-chip">
+          {v.name}
+          <b>{running ? formatValue(values[v.id] ?? 0) : "–"}</b>
+        </span>
+      ))}
+    </div>
+  );
 }

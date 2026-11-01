@@ -13,8 +13,7 @@ export type SyncMessage =
   | { type: "project"; project: Project }
   | { type: "runtime"; running: boolean; overrides: Record<string, RuntimeOverride> }
   | { type: "sensors"; values: Record<string, number> }
-  | { type: "key"; key: string }
-  | { type: "tap" };
+  | { type: "key"; key: string };
 
 export const CHANNEL_NAME = "lichtwerk";
 

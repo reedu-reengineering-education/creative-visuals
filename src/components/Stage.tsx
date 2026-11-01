@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 import { aspectRatio, useProject } from "@/lib/store";
 import { useRuntime } from "@/lib/runtime";
 import { renderStage, type View } from "@/lib/render";
-import { useSensors } from "@/lib/sensors";
 import { dist, finishStroke, hitTest } from "@/lib/geometry";
 import type { Point, Project, RuntimeOverride } from "@/lib/types";
 
@@ -131,7 +130,6 @@ export default function Stage({ view, interaction, onTap, onTwoFingers, onLongPr
         draftColor: activeGroup?.color,
         cursor: p.interaction === "draw" ? cursor.current : null,
         cursorColor: st.tool === "eraser" ? "#FFFFFF" : activeGroup?.color,
-        sensors: useSensors.getState().values,
       });
     };
     raf = requestAnimationFrame(frame);

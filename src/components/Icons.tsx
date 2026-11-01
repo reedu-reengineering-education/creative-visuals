@@ -141,12 +141,6 @@ export const EFFECT_PREVIEW: Record<EffectType, () => ReactElement> = {
       <rect x="16" y="5" width="24" height="24" rx="2" fill={W} stroke={W} strokeWidth="2" />
     </svg>
   ),
-  water: () => (
-    <svg viewBox="0 0 56 34" fill="none" aria-hidden="true">
-      <rect x="16" y="5" width="24" height="24" rx="2" stroke={L} strokeOpacity="0.5" strokeWidth="2" />
-      <path d="M17 19c3-2 5-2 8 0s5 2 8 0 5-2 6 0V28H17z" fill="#7FB8E6" fillOpacity="0.75" />
-    </svg>
-  ),
   sparkle: () => (
     <svg viewBox="0 0 56 34" fill="none" stroke={W} strokeLinecap="round" aria-hidden="true">
       <path d="M18 8v8M14 12h8" strokeWidth="2" />
@@ -192,13 +186,6 @@ export const EFFECT_PREVIEW: Record<EffectType, () => ReactElement> = {
       <circle cx="28" cy="17" r="4" fill={W} clipPath="url(#lw-rad)">
         <animate attributeName="r" values="2;21;21" keyTimes="0;0.7;1" dur="1.8s" repeatCount="indefinite" />
       </circle>
-    </svg>
-  ),
-  depth: () => (
-    <svg viewBox="0 0 56 34" fill="none" stroke={W} aria-hidden="true">
-      <rect x="14" y="3" width="28" height="28" rx="2" strokeWidth="2.2" />
-      <rect x="19" y="8" width="18" height="18" rx="2" strokeWidth="1.6" strokeOpacity="0.6" />
-      <rect x="23.5" y="12.5" width="9" height="9" rx="1.5" strokeWidth="1.2" strokeOpacity="0.35" />
     </svg>
   ),
   neon: () => (
@@ -369,15 +356,6 @@ export const EFFECT_PREVIEW: Record<EffectType, () => ReactElement> = {
       )}
     </svg>
   ),
-  breathe: () => (
-    <svg viewBox="0 0 56 34" fill="none" aria-hidden="true">
-      <g transform="translate(28 17)">
-        <rect x="-10" y="-10" width="20" height="20" rx="3" fill={W} fillOpacity="0.25" stroke={W} strokeWidth="2">
-          <animateTransform attributeName="transform" type="scale" values="1;1.25;1" dur="2.4s" repeatCount="indefinite" />
-        </rect>
-      </g>
-    </svg>
-  ),
   heartbeat: () => (
     <svg viewBox="0 0 56 34" fill="none" aria-hidden="true">
       <path d="M28 29C16 21 14 14 18 9.5c3-3 7-2 10 2 3-4 7-5 10-2 4 4.5 2 11.5-10 19.5z" fill="#FF6B5E" fillOpacity="0.6" stroke="#FF6B5E" strokeWidth="2">
@@ -448,6 +426,45 @@ export const EFFECT_PREVIEW: Record<EffectType, () => ReactElement> = {
       <text x="28" y="22" textAnchor="middle" fill={W} fontSize="14" fontWeight="700" fontFamily="Lexend, system-ui, sans-serif">
         23°
       </text>
+    </svg>
+  ),
+  level: () => (
+    <svg viewBox="0 0 56 34" aria-hidden="true">
+      <clipPath id="lw-lvl">
+        <rect x="20" y="3" width="16" height="28" rx="3" />
+      </clipPath>
+      <rect x="20" y="3" width="16" height="28" rx="3" fill="none" stroke={L} strokeOpacity="0.5" strokeWidth="1.5" />
+      <rect x="20" y="17" width="16" height="14" fill="#FF6B5E" clipPath="url(#lw-lvl)">
+        <animate attributeName="y" values="24;10;24" dur="3s" repeatCount="indefinite" />
+        <animate attributeName="height" values="7;21;7" dur="3s" repeatCount="indefinite" />
+      </rect>
+    </svg>
+  ),
+  graph: () => (
+    <svg viewBox="0 0 56 34" fill="none" aria-hidden="true">
+      <rect x="8" y="4" width="40" height="26" rx="3" stroke={L} strokeOpacity="0.4" strokeWidth="1.5" />
+      <path d="M10 24l6-5 5 3 6-10 5 6 6-8 6 4" stroke={W} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="44" cy="14" r="2.2" fill="#FFFFFF" />
+    </svg>
+  ),
+  banner: () => (
+    <svg viewBox="0 0 56 34" aria-hidden="true">
+      <clipPath id="lw-ban">
+        <rect x="12" y="3" width="32" height="28" rx="3" />
+      </clipPath>
+      <g clipPath="url(#lw-ban)" fontSize="6.5" fontWeight="700" fontFamily="Lexend, system-ui, sans-serif">
+        <g transform="rotate(-38 28 17)">
+          {[0, 1, 2, 3].map((k) => (
+            <g key={k}>
+              <rect x="-4" y={1 + k * 10} width="64" height="7.5" fill={W} />
+              <text x="0" y={7 + k * 10} fill="#15171B">
+                Hallo Hallo Hallo Hallo
+                <animate attributeName="x" values={k % 2 ? "-20;0" : "0;-20"} dur="1.6s" repeatCount="indefinite" />
+              </text>
+            </g>
+          ))}
+        </g>
+      </g>
     </svg>
   ),
 };

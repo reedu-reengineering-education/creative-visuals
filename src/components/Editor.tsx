@@ -8,12 +8,13 @@ import { interpreter, restartKeepingTime, startProgram, stopProgram, useRuntime 
 import { useTimelineUi } from "@/lib/timelineUi";
 import TimelineDock from "./TimelineDock";
 import { useSensors } from "@/lib/sensors";
-import { normaliseKey } from "@/lib/program";
+import { BUTTONS, normaliseKey } from "@/lib/program";
 import { openChannel, type SyncMessage } from "@/lib/sync";
 import type { Mode } from "@/lib/types";
 import Stage from "./Stage";
 import { Palette, ToolRail } from "./DrawTools";
-import EffectsPanel from "./EffectsPanel";
+import ClipInspector from "./ClipInspector";
+import ButtonPad from "./ButtonPad";
 import ShapeMenu from "./ShapeMenu";
 import SensorPanel from "./SensorPanel";
 import MenuDialog, { HelpDialog } from "./MenuDialog";
@@ -40,6 +41,13 @@ const MODES: { mode: Mode; key: "mode.draw" | "mode.effects" | "mode.code" | "mo
   { mode: "show", key: "mode.show", Icon: IconPlay },
 ];
 
+/** A key press for the program: key blocks, and keys 1–4 also press the on-screen buttons. */
+function pressKey(key: string) {
+  if (!useRuntime.getState().running) return;
+  interpreter.key(key);
+  if ((BUTTONS as readonly string[]).includes(key)) interpreter.button(key);
+}
+
 /** Runs the program clock, keyboard input and the sync with an output window. */
 function useRuntimeDriver() {
   useEffect(() => {
@@ -65,10 +73,7 @@ function useRuntimeDriver() {
           if (!useRuntime.getState().outputConnected) useRuntime.getState().setOutputConnected(true);
           break;
         case "key":
-          if (useRuntime.getState().running) interpreter.key(m.key);
-          break;
-        case "tap":
-          if (useRuntime.getState().running) interpreter.tap();
+          pressKey(m.key);
           break;
       }
     });
@@ -114,7 +119,7 @@ function useRuntimeDriver() {
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
       if (target?.closest?.(".blocklyWidgetDiv, .blocklyDropDownDiv")) return;
       const key = normaliseKey(e.key);
-      if (key && useRuntime.getState().running) interpreter.key(key);
+      if (key) pressKey(key);
     };
     window.addEventListener("keydown", onKey);
 
@@ -192,9 +197,9 @@ export default function Editor() {
         <Stage
           view="light"
           interaction="tap"
-          onTap={() => useRuntime.getState().running && interpreter.tap()}
           onTwoFingers={() => setMode(prevMode.current === "show" ? "draw" : prevMode.current)}
         />
+        <ButtonPad overlay />
         <p className="show-hint" style={{ opacity: hintVisible ? 1 : 0 }}>
           {t("show.exit")}
         </p>
@@ -270,7 +275,7 @@ export default function Editor() {
 
       {mode === "effects" && (
         <>
-          <EffectsPanel />
+          <ClipInspector />
           <TimelineDock onOpenCode={() => changeMode("code")} />
         </>
       )}

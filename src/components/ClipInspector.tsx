@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useProject } from "@/lib/store";
 import { useLang, useT } from "@/lib/i18n";
-import { EFFECTS, EFFECT_CATEGORIES, LIGHT_COLORS, SPECIAL_COLORS, type EffectCategory } from "@/lib/palette";
+import { EFFECTS, EFFECT_CATEGORIES, effectDef, PICK_COLORS, SPECIAL_COLORS, type EffectCategory } from "@/lib/palette";
 import { clipRowKey, type Clip } from "@/lib/timeline";
 import { activeTimeline, clipKey, saveTimeline, useTimelineUi } from "@/lib/timelineUi";
 import type { ColorSpec, EffectType, Sequence } from "@/lib/types";
@@ -15,7 +15,7 @@ import { LayerButtons } from "./ShapeMenu";
 const RAINBOW = "conic-gradient(#FF6B5E, #FFE45C, #7CF29A, #5CE6E0, #5C9DFF, #B07CFF, #FF6B5E)";
 
 /** Side panel for the selected clip of the timeline: effect, colour, timing. */
-export default function EffectsPanel() {
+export default function ClipInspector() {
   const t = useT();
   const lang = useLang((s) => s.lang);
   const project = useProject((s) => s.project);
@@ -113,7 +113,7 @@ export default function EffectsPanel() {
                 aria-pressed={on}
                 onClick={() =>
                   patch(
-                    e.value === "text" && !clip.params?.text
+                    effectDef(e.value)?.uses.includes("text") && !clip.params?.text
                       ? { effect: e.value, params: { ...clip.params, text: t("param.text.default") } }
                       : { effect: e.value },
                   )
@@ -129,10 +129,10 @@ export default function EffectsPanel() {
 
       <div className="section" role="group" aria-label={t("effects.color")}>
         <div className="swatches">
-          {LIGHT_COLORS.map((c) => (
+          {PICK_COLORS.map((c) => (
             <button
               key={c.value}
-              className={`sw-color${clip.color === c.value ? " on" : ""}`}
+              className={`sw-color${c.value === "#000000" ? " sw-black" : ""}${clip.color === c.value ? " on" : ""}`}
               style={{ background: c.value }}
               aria-label={t(c.key)}
               aria-pressed={clip.color === c.value}

@@ -4,9 +4,8 @@ import * as Blockly from "blockly/core";
 import { useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { EFFECTS, EFFECT_CATEGORIES, LIGHT_COLORS, SPECIAL_COLORS, effectDef, type EffectCategory } from "@/lib/palette";
-import { CLOCK, SIZES, SPEEDS, TIMER, DIRECTIONS, cleanParams, encodeParams, parseParams } from "@/lib/params";
-import { allChannels, channelLabel } from "@/lib/sensors";
+import { EFFECTS, EFFECT_CATEGORIES, PICK_COLORS, SPECIAL_COLORS, effectDef, type EffectCategory } from "@/lib/palette";
+import { AMOUNTS, CLOCK, SIZES, SPEEDS, DIRECTIONS, cleanParams, encodeParams, parseParams } from "@/lib/params";
 import { t } from "@/lib/i18n";
 import type { EffectParams, EffectType } from "@/lib/types";
 import { EFFECT_PREVIEW } from "../Icons";
@@ -86,37 +85,39 @@ const SPECIAL_BG: Record<string, string> = {
   random: "repeating-linear-gradient(45deg,#FF6B5E 0 6px,#5C9DFF 6px 12px,#7CF29A 12px 18px)",
 };
 
-function ColorGrid({ value, pick }: { value: string; pick: (v: string) => void }) {
+function ColorGrid({ value, pick, specials = true }: { value: string; pick: (v: string) => void; specials?: boolean }) {
   return (
     <div className="lw-grid lw-colors" role="listbox" aria-label={t("effects.color")}>
       <div className="lw-swatches">
-        {LIGHT_COLORS.map((c) => (
+        {PICK_COLORS.map((c) => (
           <button
             key={c.value}
             role="option"
             aria-selected={value === c.value}
             aria-label={t(c.key)}
             title={t(c.key)}
-            className={`lw-swatch${value === c.value ? " on" : ""}`}
+            className={`lw-swatch${c.value === "#000000" ? " sw-black" : ""}${value === c.value ? " on" : ""}`}
             style={{ background: c.value }}
             onClick={() => pick(c.value)}
           />
         ))}
       </div>
-      <div className="lw-specials">
-        {SPECIAL_COLORS.map((c) => (
-          <button
-            key={c.value}
-            role="option"
-            aria-selected={value === c.value}
-            className={`lw-special${value === c.value ? " on" : ""}`}
-            onClick={() => pick(c.value)}
-          >
-            <span className="lw-swatch-mini" style={{ background: SPECIAL_BG[c.value] }} />
-            {t(c.key)}
-          </button>
-        ))}
-      </div>
+      {specials && (
+        <div className="lw-specials">
+          {SPECIAL_COLORS.map((c) => (
+            <button
+              key={c.value}
+              role="option"
+              aria-selected={value === c.value}
+              className={`lw-special${value === c.value ? " on" : ""}`}
+              onClick={() => pick(c.value)}
+            >
+              <span className="lw-swatch-mini" style={{ background: SPECIAL_BG[c.value] }} />
+              {t(c.key)}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -128,8 +129,11 @@ export class FieldEffectGrid extends GridField {
 }
 
 export class FieldColorGrid extends GridField {
+  /** false: only real colours (no rainbow / group / random), e.g. for colour links */
+  specials = true;
+
   protected renderGrid(value: string, pick: (v: string) => void) {
-    return <ColorGrid value={value} pick={pick} />;
+    return <ColorGrid value={value} pick={pick} specials={this.specials} />;
   }
 }
 
@@ -146,17 +150,17 @@ export function settingsSummary(effect: EffectType, p: EffectParams): string {
   const uses = new Set(def?.uses ?? []);
   const parts: string[] = [];
   if (uses.has("text")) parts.push(p.text ? `"${short(p.text, 14)}"` : t("param.text.empty"));
-  if (uses.has("source")) {
-    const src = p.source ?? TIMER;
-    const ch = allChannels().find((c) => c.id === src);
-    parts.push(src === TIMER ? "⏱" : src === CLOCK ? "🕒" : ch ? channelLabel(ch) : src);
-  }
+  if (uses.has("source")) parts.push(p.source === CLOCK ? "🕒" : "⏱");
   if (uses.has("speed") && p.speed !== undefined && p.speed !== 1) {
     const s = SPEEDS.find((x) => x.value === p.speed);
     parts.push(s?.icon || (s ? t(s.key) : `${p.speed}×`));
   }
   if (uses.has("size") && p.size !== undefined && p.size !== 1) {
     parts.push(SIZES.find((x) => x.value === p.size)?.label ?? `${p.size}×`);
+  }
+  if (uses.has("amount") && p.amount !== undefined && p.amount !== 0.5) {
+    const a = AMOUNTS.find((x) => x.value === p.amount);
+    parts.push(a ? t(a.key) : `${Math.round(p.amount * 100)}%`);
   }
   if (uses.has("brightness") && p.brightness !== undefined && p.brightness !== 1) {
     parts.push(`${Math.round(p.brightness * 100)}%`);

@@ -28,7 +28,7 @@ function Sparkline({ values }: { values: number[] }) {
   );
 }
 
-function SensorRow({ c }: { c: SensorChannel }) {
+function SensorRow({ c, simulate }: { c: SensorChannel; simulate: boolean }) {
   const t = useT();
   const value = useSensors((s) => s.values[c.id]);
   const history = useSensors((s) => s.history[c.id]);
@@ -44,6 +44,18 @@ function SensorRow({ c }: { c: SensorChannel }) {
         </span>
       </div>
       <Sparkline values={history ?? []} />
+      {simulate && (
+        <input
+          type="range"
+          className="sensor-slider"
+          min={c.min}
+          max={c.max}
+          step={step}
+          value={value ?? (c.min + c.max) / 2}
+          aria-label={channelLabel(c)}
+          onChange={(e) => useSensors.getState().setValue(c.id, Number(e.target.value))}
+        />
+      )}
     </div>
   );
 }
@@ -99,9 +111,10 @@ export default function SensorPanel({ onClose }: { onClose: () => void }) {
       )}
       {error && <p className="muted danger">{t("sensors.error", { msg: error })}</p>}
       {status === "connected" && <p className="muted">{t("sensors.hint")}</p>}
+      {status !== "connected" && <p className="muted">{t("sensors.simulate")}</p>}
       <div className="sensor-list">
         {[...KNOWN_CHANNELS, ...discovered].map((c) => (
-          <SensorRow key={c.id} c={c} />
+          <SensorRow key={c.id} c={c} simulate={status !== "connected"} />
         ))}
       </div>
     </Dialog>

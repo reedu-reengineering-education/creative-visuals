@@ -24,10 +24,12 @@ npm run start -- -H 0.0.0.0   # open http://<laptop-ip>:3000 on the iPads
 
 | Mode | What kids do |
 | --- | --- |
-| **Zeichnen / Draw** | Pick a pen colour (= group) and trace the edges they see on the wall. Strokes are smoothed, closed automatically when the end meets the start, and straightened when they're almost straight. Every stroke in a group gets a number (drawing order). Long-press or double-click a colour to rename it ("Bücher", "Stufen", …). Long-press (or right-click) a shape for the shape menu: layer order (to front / forward / backward / to back), give it an effect, delete. Layers are separate from the numbers, so reordering never renumbers a group. |
-| **Effekte / Effects** | Tap a stroke, then pick an effect (glow, blink, chase, fill, water, sparkle, line, off), a colour (incl. *rainbow by number*) and *all at once* vs *one by one*. Applies to the whole group or only to this number. |
-| **Code** | Blockly with five categories: events (start, key, tap), loops (*for each of group one by one*, repeat, forever), wait, effects, sensors. The </> button shows the program as JavaScript-like code for older kids. Changing blocks while the program runs restarts it (live coding). |
-| **Show** | Only light, no UI. Starts the program. Tap with two fingers or press Esc to go back. |
+| **Zeichnen / Draw** | Pick a pen colour (= group) and trace the edges they see on the wall. Strokes are smoothed, closed automatically when the end meets the start, and straightened when they're almost straight. Every stroke in a group gets a number (drawing order). Long-press or double-click a colour to rename it ("Bücher", "Stufen", …). Long-press (or right-click) a shape for layers (to front / back), effect, delete. |
+| **Effekte / Effects** | The no-code path: one looping timeline ("show"). Tap a row to add a clip, drag to move or resize. The clip inspector picks one of ~34 effects (line, light, fill, particles, trippy, tech, text & data), a colour (incl. black to mask things out, rainbow by number) and settings: speed, size, brightness, direction, second colour, amount, text or data source. |
+| **Code** | Blockly. The Effects show is the baseline; code reacts to data and input on top of it: `Wenn ⟨…⟩` / `Solange ⟨…⟩` with sensor conditions, `Verbinde ⟨Wert⟩ → Tempo/Größe/Helligkeit/Farbe/Füllstand/Menge` (a sensor steers a setting continuously), on-screen buttons, variables, loops, if/else, maths. The </> button shows the program as JavaScript-like code. |
+| **Show** | Only light, no UI (plus the buttons the program uses). Two-finger tap or Esc goes back. |
+
+Workshop idea (2–4 h, grades 5–7): program the senseBox to send its readings, draw the scene, design a show in Effects, then decide in Code how the data changes it (louder = faster, warmer = redder, closer = bigger). Without a senseBox, the sensor dialog has sliders to test.
 
 ## Setups
 
@@ -51,28 +53,32 @@ The BLE profile comes from **senseBox:bike** (`sensebox/senseBox-bike-Arduino`, 
 
 ```
 src/
-  app/                 Next.js routes: / (editor), /output (projector window), manifest
+  app/                   Next.js routes: / (editor), /output (projector window), manifest
   components/
-    Editor.tsx         modes, top bar, runtime driver (program clock, keys, sync)
-    Stage.tsx          letterboxed canvas, drawing / erasing / selecting
-    DrawTools.tsx      tool rail, pen colours (= groups), rename dialog
-    EffectsPanel.tsx   effect / colour / timing / layer / group for the selected stroke
-    ShapeMenu.tsx      long-press menu: layers, effect, delete
-    CodeMode.tsx       Blockly workspace, preview, code view
-    blocks/defs.ts     block definitions, toolbox, theme, example program
-    blocks/compile.ts  blocks -> JSON program (also headless)
-    SensorPanel.tsx    BLE connect, live values
-    OutputView.tsx     projector window
+    Editor.tsx           modes, top bar, runtime driver (program clock, keys, sync)
+    Stage.tsx            letterboxed canvas, drawing / erasing / selecting
+    TimelineDock.tsx     the show timeline (Effects mode)
+    ClipInspector.tsx    effect, colour and settings of the selected clip
+    EffectSettings.tsx   effect settings, shared with the ⚙ popup on effect blocks
+    CodeMode.tsx         Blockly workspace, preview, button pad, variables, code view
+    blocks/defs.ts       block definitions, renderer, theme, toolbox
+    blocks/gridFields.tsx  visual pickers (effects, colours, settings)
+    SensorPanel.tsx      BLE connect, live values, test sliders
+    OutputView.tsx       projector window
   lib/
-    types.ts           project model (strokes, groups, effects)
-    geometry.ts        smoothing, auto-close, simplification, hit testing
-    render.ts          canvas renderer for all effects
-    program.ts         program AST + "show as code"
-    runtime.ts         interpreter (coroutines, events, sensor triggers)
-    sensors.ts         BLE profile, connection, sensor store
-    store.ts           project store (zustand), undo, localStorage
-    sync.ts            BroadcastChannel protocol, output window
-    i18n.ts            German / English
+    types.ts             project model
+    palette.ts           effects, categories, colours
+    params.ts            effect settings (speed, size, …)
+    render.ts / fx.ts    canvas renderer and effect drawing
+    timeline.ts          timeline <-> blocks
+    blockJson.ts         blocks (JSON) -> program
+    program.ts           program AST + "show as code"
+    runtime.ts           interpreter (coroutines, triggers, variables, links)
+    migrate.ts           updates older projects on load / import
+    sensors.ts           BLE profile, connection, sensor store
+    store.ts             project store (zustand), undo, localStorage
+    sync.ts              BroadcastChannel protocol, output window
+    i18n.ts              German / English
 ```
 
 Projects are saved automatically in the browser (localStorage) and can be exported or imported as JSON from the menu.
@@ -82,5 +88,5 @@ Projects are saved automatically in the browser (localStorage) and can be export
 * Network sync (iPad editor -> laptop output) via a small WebSocket server or WebRTC
 * Number strokes by position (left -> right) as an alternative to drawing order
 * Corner-pin warping for a whole drawing (when the projector moves)
-* More blocks: variables, sensor value -> brightness/colour mapping, sounds
+* State blocks for automata (traffic light), step mode for debugging, a Struktogramm view
 * Accounts / sharing projects (Next.js route handlers + auth)

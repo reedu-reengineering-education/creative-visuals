@@ -82,10 +82,7 @@ export default function OutputView() {
           view="light"
           interaction="tap"
           source={() => data.current!}
-          onTap={() => {
-            goFullscreen();
-            post.current({ type: "tap" });
-          }}
+          onTap={goFullscreen}
         />
       )}
       <div className="output-hint" style={{ opacity: hint ? 1 : 0 }}>

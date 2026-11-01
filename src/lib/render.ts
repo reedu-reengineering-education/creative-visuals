@@ -1,9 +1,8 @@
 import { labelPoint, layerOrder, pathLength, pointAlong, bounds } from "./geometry";
-import { DEFAULT_EFFECT, EFFECTS, hash01, hashString, resolveColor, type EffectDef } from "./palette";
-import { CLOCK, TIMER } from "./params";
-import { allChannels } from "./sensors";
+import { EFFECTS, hash01, hashString, resolveColor, type EffectDef } from "./palette";
+import { CLOCK } from "./params";
 import * as fx from "./fx";
-import type { EffectAssignment, EffectParams, EffectType, Point, Project, RuntimeOverride, Stroke } from "./types";
+import type { EffectParams, EffectType, Point, Project, RuntimeOverride, Stroke } from "./types";
 
 export type View = "draw" | "effects" | "light";
 
@@ -24,8 +23,6 @@ export interface RenderOptions {
   badges?: boolean;
   /** strokes to mark (e.g. the group of the selected timeline row) */
   highlightIds?: string[];
-  /** live sensor values, for the "number" effect */
-  sensors?: Record<string, number>;
 }
 
 interface Resolved {
@@ -37,6 +34,10 @@ interface Resolved {
   color2: string | null;
   /** what a text or number effect shows */
   text: string;
+  /** data effects: fill level 0..1 */
+  level: number;
+  /** data effects: recent values scaled to 0..1 */
+  series: number[];
 }
 
 const DEFS = new Map<EffectType, EffectDef>(EFFECTS.map((e) => [e.value, e]));
@@ -74,7 +75,7 @@ function resolve(
     let t = (o.now - ov.since) / 1000;
     if (ov.sequence === "sequential") {
       t -= index * STAGGER;
-      if (t < 0) return { effect: "off", color, t: 0, params, color2: null, text: "" };
+      if (t < 0) return { effect: "off", color, t: 0, params, color2: null, text: "", level: 0, series: [] };
     }
     t = Math.max(0, t);
     const def = DEFS.get(ov.effect);
@@ -86,41 +87,49 @@ function resolve(
       params,
       color2: params.color2 ? resolveColor(params.color2, index, count, groupColor, s.id) : null,
       text: contentOf(o, ov.effect, params, t),
+      ...dataOf(o, s.id, ov.effect, params, t * speed),
     };
   }
-  const a: EffectAssignment =
-    o.project.strokeEffects[s.id] ?? o.project.groupEffects[s.groupId] ?? DEFAULT_EFFECT;
-  const color = resolveColor(a.color, index, count, groupColor, s.id);
-  const rest = { params: NO_PARAMS, color2: null, text: contentOf(o, a.effect, NO_PARAMS, nowS) };
-  if (a.sequence === "sequential") {
-    // loop: one after another, hold, start again
-    const cycle = count * STAGGER + 3;
-    const local = (nowS % cycle) - index * STAGGER;
-    if (a.effect === "fill" || a.effect === "water") {
-      return { effect: local < 0 ? "off" : a.effect, color, t: Math.max(0, local), ...rest };
-    }
-    return { effect: a.effect, color, t: nowS - index * STAGGER, ...rest };
-  }
-  return { effect: a.effect, color, t: nowS, ...rest };
+  // no program running (or nothing set for this shape): a plain line
+  return { effect: "line", color: "#FFFFFF", t: nowS, params: NO_PARAMS, color2: null, text: "", level: 0, series: [] };
 }
 
 const two = (n: number) => String(n).padStart(2, "0");
 
+/** Linked fill levels glide instead of jumping when a new sensor value arrives. */
+const shownLevel = new Map<string, { v: number; at: number }>();
+
+/**
+ * Level and curve for the data effects. Without a "Verbinde" link in code,
+ * "Füllstand" fills up by itself like water and "Kurve" stays empty.
+ */
+function dataOf(
+  o: RenderOptions,
+  strokeId: string,
+  effect: EffectType,
+  p: EffectParams,
+  t: number,
+): { level: number; series: number[] } {
+  if (effect === "graph") return { level: 0, series: p.series ?? [] };
+  if (effect !== "level") return { level: 0, series: [] };
+  if (p.level === undefined) return { level: Math.min(1, t / 2.5) * 0.9 + Math.sin(t * 1.5) * 0.02, series: [] };
+  const prev = shownLevel.get(strokeId);
+  const dt = prev ? Math.min(0.25, Math.max(0, (o.now - prev.at) / 1000)) : 1;
+  const shown = prev ? prev.v + (p.level - prev.v) * Math.min(1, dt * 4) : p.level;
+  shownLevel.set(strokeId, { v: shown, at: o.now });
+  return { level: shown, series: [] };
+}
+
 /** The text a text or number effect shows. `seconds` = real seconds since the effect started. */
 function contentOf(o: RenderOptions, effect: EffectType, p: EffectParams, seconds: number): string {
-  if (effect === "text") return p.text?.trim() || "✨";
+  if (effect === "text" || effect === "banner") return p.text?.trim() || "✨";
   if (effect !== "number") return "";
-  const source = p.source ?? TIMER;
-  if (source === TIMER) return String(Math.floor(seconds));
-  if (source === CLOCK) {
+  if (p.value !== undefined) return p.value;
+  if (p.source === CLOCK) {
     const d = new Date(o.now);
     return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
   }
-  const v = o.sensors?.[source];
-  const unit = allChannels().find((c) => c.id === source)?.unit ?? "";
-  if (v === undefined || !Number.isFinite(v)) return `– ${unit}`.trim();
-  const digits = Math.abs(v) >= 100 ? 0 : 1;
-  return `${v.toFixed(digits)} ${unit}`.trim();
+  return String(Math.floor(seconds));
 }
 
 function drawEffect(
@@ -159,6 +168,9 @@ function drawEffect(
     color2: r.color2,
     dir,
     text: r.text,
+    amount: params.amount ?? 0.5,
+    level: r.level,
+    series: r.series,
   });
 
   switch (effect) {
@@ -176,9 +188,6 @@ function drawEffect(
     }
     case "radial":
       fx.radial(args());
-      break;
-    case "depth":
-      fx.depth(args());
       break;
     case "neon":
       fx.neon(args());
@@ -222,9 +231,6 @@ function drawEffect(
     case "pixel":
       fx.pixel(args());
       break;
-    case "breathe":
-      fx.breathe(args());
-      break;
     case "heartbeat":
       fx.heartbeat(args());
       break;
@@ -243,8 +249,17 @@ function drawEffect(
     case "text":
       fx.ticker(args());
       break;
+    case "banner":
+      fx.banner(args());
+      break;
     case "number":
       fx.bigNumber(args());
+      break;
+    case "level":
+      fx.fillLevel(args());
+      break;
+    case "graph":
+      fx.graph(args());
       break;
 
     case "glow": {
@@ -302,44 +317,10 @@ function drawEffect(
       break;
     }
 
-    case "water": {
-      if (!s.closed) {
-        // lines can't hold water – let it flow along instead
-        drawEffect(ctx, s, { ...r, effect: "chase" }, w, h, lw);
-        break;
-      }
-      const b = bounds(s.points);
-      const top = b.minY * h;
-      const bottom = b.maxY * h;
-      const left = b.minX * w;
-      const right = b.maxX * w;
-      const level = Math.min(1, t / 2.5) * 0.9 + Math.sin(t * 1.5) * 0.02;
-      const waterY = bottom - (bottom - top) * level;
-      const amp = Math.max(2, (bottom - top) * 0.03);
-      ctx.save();
-      tracePath(ctx, s, w, h);
-      ctx.clip();
-      ctx.globalAlpha = 0.85;
-      ctx.beginPath();
-      ctx.moveTo(left - 2, bottom + 2);
-      const steps = 24;
-      for (let i = 0; i <= steps; i++) {
-        const x = left + ((right - left) * i) / steps;
-        const y = waterY + Math.sin(i / 3 + t * 3) * amp;
-        ctx.lineTo(x, y);
-      }
-      ctx.lineTo(right + 2, bottom + 2);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-      outline(0.5);
-      break;
-    }
-
     case "sparkle": {
       outline(0.22);
       const len = pathLength(s.points.map((p) => ({ x: p.x * w, y: p.y * h })));
-      const n = Math.max(4, Math.min(30, Math.round(len / (lw * 10))));
+      const n = Math.round(Math.max(4, Math.min(30, Math.round(len / (lw * 10)))) * (params.amount ?? 0.5) * 2);
       const seed = hashString(s.id) % 1000;
       ctx.shadowColor = color;
       ctx.shadowBlur = lw * 3;
