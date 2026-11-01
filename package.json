@@ -1,0 +1,26 @@
+{
+  "name": "lichtwerk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Projection mapping for kids: trace objects on a tablet, give them light effects and program them with blocks.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "blockly": "^13.4.0",
+    "next": "^16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zustand": "^5.0.16"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19",
+    "@types/web-bluetooth": "^0.0.22",
+    "typescript": "^5.9.3"
+  }
+}
