@@ -137,6 +137,8 @@ export interface FxArgs {
   /** the size setting itself, for things measured by the shape (text) */
   size: number;
   seed: number;
+  /** id of the shape (for effects that remember something between frames) */
+  id: string;
   /** second colour, or null if the kids didn't pick one */
   color2: string | null;
   dir: Direction | undefined;
@@ -193,11 +195,15 @@ export function drawOn({ ctx, pts, closed, color, t, lw }: FxArgs) {
   }
 }
 
-/** A circle grows from the middle and fills the shape; then soft rings keep moving. */
+/** Seconds for one "grow and shrink" of the circle. */
+const RADIAL_PERIOD = 2.4;
+
+/** A filled circle in the middle keeps growing until it fills the shape and shrinking again. */
 export function radial({ ctx, pts, closed, color, t, lw }: FxArgs) {
+  // 0 → 1 → 0, smooth at both ends (starts small)
+  const e = 0.5 - 0.5 * Math.cos((t / RADIAL_PERIOD) * Math.PI * 2);
   if (!closed) {
-    // lines grow from their middle to both ends
-    const e = easeOut(t / 1.2);
+    // lines grow from their middle to both ends and back
     const part = subPath(pts, false, 0.5 - e / 2, 0.5 + e / 2);
     if (part.length < 2) return;
     ctx.shadowColor = color;
@@ -209,31 +215,19 @@ export function radial({ ctx, pts, closed, color, t, lw }: FxArgs) {
   }
   const c = centroid(pts, true);
   const R = Math.max(...pts.map((p) => dist(p, c))) * 1.02;
-  const e = easeOut(t / 1.4);
+  const r = Math.max(lw, R * (0.06 + 0.94 * e));
   ctx.save();
   trace(ctx, pts, true);
   ctx.clip();
   ctx.globalAlpha = 0.9;
   ctx.beginPath();
-  ctx.arc(c.x, c.y, R * e, 0, Math.PI * 2);
+  ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
   ctx.fill();
-  if (e < 1) {
-    ctx.globalAlpha = 0.8;
-    ctx.strokeStyle = "#FFFFFF";
-    ctx.lineWidth = lw * 1.5;
-    ctx.stroke();
-  } else {
-    // calm rings travelling outwards
-    ctx.strokeStyle = "#FFFFFF";
-    ctx.lineWidth = lw;
-    for (let k = 0; k < 3; k++) {
-      const f = (t * 0.45 + k / 3) % 1;
-      ctx.globalAlpha = 0.35 * (1 - f);
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, R * f, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  }
+  // bright edge so the circle reads as a circle, also on a light colour
+  ctx.globalAlpha = 0.85;
+  ctx.strokeStyle = "#FFFFFF";
+  ctx.lineWidth = lw * 1.5;
+  ctx.stroke();
   ctx.restore();
   ctx.globalAlpha = 1;
   ctx.lineWidth = lw;
@@ -1093,7 +1087,30 @@ export function gradient({ ctx, pts, closed, color, color2, t, lw, dir }: FxArgs
 /* ------------------------------------------------------------------ */
 
 /** Scrolling text: a ticker inside shapes, letters running along lines. */
-export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir }: FxArgs) {
+/**
+ * Running text. Plain "distance mod text width" jumps whenever the text gets
+ * wider or narrower (a value going from 9 to 10), and all repetitions behind
+ * it jump too. So each running text keeps its own position, which only moves
+ * by the distance travelled since the last frame, and the spacing of the
+ * repetitions glides to the new width in a few frames. Keyed by font size too,
+ * so the editor and the small Code preview don't disturb each other.
+ */
+const scrolls = new Map<string, { pos: number; last: number; unit: number }>();
+function scroll(key: string, distance: number, unit: number): { off: number; unit: number } {
+  let st = scrolls.get(key);
+  if (!st) {
+    st = { pos: distance, last: distance, unit };
+    scrolls.set(key, st);
+  }
+  const moved = distance - st.last;
+  st.last = distance;
+  st.unit += (unit - st.unit) * 0.06;
+  if (Math.abs(unit - st.unit) < 0.5) st.unit = unit;
+  st.pos = (((st.pos + moved) % st.unit) + st.unit) % st.unit;
+  return { off: st.pos, unit: st.unit };
+}
+
+export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir, id }: FxArgs) {
   const sgn = dir === "right" ? 1 : -1;
   ctx.fillStyle = color;
   ctx.shadowColor = color;
@@ -1104,8 +1121,7 @@ export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir }: FxAr
     const font = Math.max(lw * 3, Math.min(b.h * 0.9, b.h * 0.55 * size));
     ctx.font = `600 ${font.toFixed(1)}px ${FONT}`;
     ctx.textAlign = "left";
-    const unit = ctx.measureText(`${text}   `).width || 1;
-    const off = (((t * font * 2.2 * sgn) % unit) + unit) % unit;
+    const { off, unit } = scroll(`${id}:t:${font.toFixed(0)}`, t * font * 2.2 * sgn, ctx.measureText(`${text}   `).width || 1);
     const y = (b.minY + b.maxY) / 2;
     inside(ctx, pts, () => {
       ctx.globalAlpha = 1;
@@ -1120,10 +1136,9 @@ export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir }: FxAr
   ctx.textAlign = "center";
   const letters = graphemes(`${text}   `);
   const widths = letters.map((l) => ctx.measureText(l).width);
-  const unit = widths.reduce((a, w) => a + w, 0) || 1;
   const samples = resample(pts, false, 2);
   const total = samples[samples.length - 1]?.d ?? 0;
-  const off = (((t * font * 2.2 * sgn) % unit) + unit) % unit;
+  const { off, unit } = scroll(`${id}:l:${font.toFixed(0)}`, t * font * 2.2 * sgn, widths.reduce((a, w) => a + w, 0) || 1);
   ctx.globalAlpha = 1;
   for (let start = -unit + off; start < total; start += unit) {
     let d = start;
@@ -1147,7 +1162,7 @@ export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir }: FxAr
  * colour is picked. Lines get the normal ticker along the line.
  */
 export function banner(args: FxArgs) {
-  const { ctx, pts, closed, color, color2, t, lw, size, text, dir } = args;
+  const { ctx, pts, closed, color, color2, t, lw, size, text, dir, id } = args;
   if (!closed) {
     ticker({ ...args, dir: "left" });
     return;
@@ -1165,7 +1180,7 @@ export function banner(args: FxArgs) {
     ctx.font = `600 ${font.toFixed(1)}px ${FONT}`;
     ctx.textAlign = "left";
     ctx.textBaseline = "middle";
-    const unit = ctx.measureText(`${text}   `).width || 1;
+    const width = ctx.measureText(`${text}   `).width || 1;
     let k = 0;
     for (let y = -R - period; y < R + period; y += period, k++) {
       ctx.globalAlpha = 0.95;
@@ -1173,7 +1188,7 @@ export function banner(args: FxArgs) {
       ctx.fillRect(-R, y, R * 2, band);
       // every other stripe runs the other way
       const sgn = k % 2 ? 1 : -1;
-      const off = (((t * font * 1.6 * sgn) % unit) + unit) % unit;
+      const { off, unit } = scroll(`${id}:b${k}:${font.toFixed(0)}`, t * font * 1.6 * sgn, width);
       ctx.globalAlpha = 1;
       // no second colour: black letters = no light, they look cut out
       ctx.fillStyle = color2 ?? "#000000";

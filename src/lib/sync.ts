@@ -13,7 +13,7 @@ export type SyncMessage =
   | { type: "ping" }
   | { type: "pong" }
   | { type: "project"; project: Project }
-  | { type: "runtime"; running: boolean; overrides: Record<string, RuntimeOverride> }
+  | { type: "runtime"; running: boolean; overrides: Record<string, RuntimeOverride>; pausedAt?: number | null }
   | { type: "sensors"; values: Record<string, number> }
   | { type: "key"; key: string };
 

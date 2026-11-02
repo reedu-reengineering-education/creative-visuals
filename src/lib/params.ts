@@ -76,7 +76,7 @@ export function parseParams(v: unknown): EffectParams {
   if (typeof r.color2 === "string" && r.color2) p.color2 = r.color2 as ColorSpec;
   if (typeof r.text === "string" && r.text) p.text = r.text.slice(0, 120);
   if (r.source === TIMER || r.source === CLOCK) p.source = r.source;
-  if (typeof r.value === "string") p.value = r.value.slice(0, 40);
+  if (typeof r.value === "string") p.value = r.value.slice(0, 120);
   const amount = finite(r.amount);
   if (amount !== undefined) p.amount = Math.min(1, Math.max(0, amount));
   const level = finite(r.level);

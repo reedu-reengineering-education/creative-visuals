@@ -5,14 +5,16 @@
  */
 import { parseParams } from "./params";
 import {
+  SHOW_EFFECTS,
   type Expr,
+  type ShowEffect,
   type LinkProp,
   type Script,
   type Stmt,
   type Target,
   type Trigger,
 } from "./program";
-import type { ColorSpec, EffectType, Sequence } from "./types";
+import type { ColorSpec, EffectParams, EffectType, Sequence } from "./types";
 
 export const ALL = "__all";
 export const THIS = "__this";
@@ -120,7 +122,7 @@ export function exprOf(b: BlockJson | undefined, fallback: Expr = ZERO): Expr {
     case "lw_var_get":
       return { k: "var", id: varId(f.VAR) };
     case "lw_sensor_value":
-      return { k: "sensor", sensor: str(f.SENSOR, "noise") };
+      return { k: "sensor", sensor: str(f.SENSOR, "temperature") };
     case "lw_random":
       return { k: "random", min: arg("MIN"), max: arg("MAX") };
     case "lw_arith": {
@@ -135,9 +137,25 @@ export function exprOf(b: BlockJson | undefined, fallback: Expr = ZERO): Expr {
       return { k: "logic", op: f.OP === "or" ? "or" : "and", a: arg("A", FALSE), b: arg("B", FALSE) };
     case "lw_not":
       return { k: "not", a: arg("A", FALSE) };
+    case "lw_text":
+      return { k: "text", v: str(f.TEXT) };
+    case "lw_join": {
+      const parts: Expr[] = [];
+      for (let i = 0; i < joinItems(b); i++) {
+        const part = inputBlock(b, `ITEM${i}`);
+        if (part) parts.push(exprOf(part));
+      }
+      return { k: "join", parts };
+    }
     default:
       return fallback;
   }
+}
+
+/** How many pieces a "Text aus …" block has (saved as extra state). */
+export function joinItems(b: BlockJson): number {
+  const items = Number((b.extraState as { items?: unknown } | undefined)?.items);
+  return Number.isInteger(items) && items > 0 ? Math.min(items, 20) : 2;
 }
 
 function stmtOf(b: BlockJson): Stmt | null {
@@ -208,11 +226,20 @@ function stmtOf(b: BlockJson): Stmt | null {
         k: "show",
         target: targetOf(str(f.TARGET, ALL)),
         value: exprOf(inputBlock(b, "VALUE")),
+        // older blocks have no effect field: they showed a big number
+        effect: (SHOW_EFFECTS as readonly string[]).includes(str(f.EFFECT)) ? (str(f.EFFECT) as ShowEffect) : "number",
         color: str(f.COLOR, "#FFD98A") as ColorSpec,
+        params: showParams(parseParams(f.SET)),
       };
     default:
       return null;
   }
+}
+
+/** "Zeige …" brings its own content, so the effect's text and stopwatch settings don't apply. */
+function showParams(p: EffectParams): EffectParams | undefined {
+  const { text: _text, source: _source, value: _value, ...rest } = p;
+  return Object.keys(rest).length ? rest : undefined;
 }
 
 function compileChain(first: BlockJson | undefined): Stmt[] {
@@ -238,12 +265,14 @@ export function compileProgramJson(program: unknown, isTimeline: (hat: BlockJson
     if (!HAT_TYPES.has(hat.type)) continue;
     const trigger = triggerOf(hat);
     if (!trigger) continue;
+    const timeline = isTimeline(hat);
     scripts.push({
       id: hat.id ?? Math.random().toString(36).slice(2),
       trigger,
       body: compileChain(hat.next?.block),
       // "Solange" scripts clear themselves when their condition turns false, not when they end
-      clearOnEnd: trigger.k !== "start" && trigger.k !== "while" && isTimeline(hat),
+      clearOnEnd: trigger.k !== "start" && trigger.k !== "while" && timeline,
+      timeline,
     });
   }
   return scripts;

@@ -20,7 +20,6 @@ import SensorPanel from "./SensorPanel";
 import MenuDialog, { HelpDialog } from "./MenuDialog";
 import {
   IconBlocks,
-  IconCode,
   IconHelp,
   IconMenu,
   IconPen,
@@ -84,7 +83,7 @@ function useRuntimeDriver() {
     const sendAll = () => {
       ch.post({ type: "project", project: useProject.getState().project });
       const rt = useRuntime.getState();
-      ch.post({ type: "runtime", running: rt.running, overrides: rt.overrides });
+      ch.post({ type: "runtime", running: rt.running, overrides: rt.overrides, pausedAt: rt.pausedAt });
       ch.post({ type: "sensors", values: useSensors.getState().values });
     };
     let restartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -97,8 +96,8 @@ function useRuntimeDriver() {
       }
     });
     const unsubRuntime = useRuntime.subscribe((s, prev) => {
-      if (s.overrides !== prev.overrides || s.running !== prev.running) {
-        ch.post({ type: "runtime", running: s.running, overrides: s.overrides });
+      if (s.overrides !== prev.overrides || s.running !== prev.running || s.pausedAt !== prev.pausedAt) {
+        ch.post({ type: "runtime", running: s.running, overrides: s.overrides, pausedAt: s.pausedAt });
       }
     });
     let sensorTimer: ReturnType<typeof setTimeout> | null = null;
@@ -150,7 +149,6 @@ export default function Editor() {
   const [sensorsOpen, setSensorsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [showCode, setShowCode] = useState(false);
   const [shapeMenu, setShapeMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const running = useRuntime((s) => s.running);
   const [hintVisible, setHintVisible] = useState(true);
@@ -212,7 +210,7 @@ export default function Editor() {
   }
 
   return (
-    <div className={`app${mode === "code" ? " code" : ""}${mode === "effects" ? ` effects${dockCollapsed ? " dock-collapsed" : ""}` : ""}`}>
+    <div className={`app dotted${mode === "code" ? " code" : ""}${mode === "effects" ? ` effects${dockCollapsed ? " dock-collapsed" : ""}` : ""}`}>
       {mode !== "code" && (
         <Stage
           view={mode === "draw" ? "draw" : "effects"}
@@ -223,10 +221,13 @@ export default function Editor() {
         />
       )}
 
-      <div className="status">
-        <span className={`dot${outputConnected ? "" : " off"}`} />
-        {outputConnected ? t("status.output") : t("status.local")}
-      </div>
+      {/* only worth a word when an output window (or the projector in the iOS app) is connected */}
+      {outputConnected && (
+        <div className="status">
+          <span className="dot" />
+          {t("status.output")}
+        </div>
+      )}
 
       <nav className="modebar bar" aria-label="Modus">
         {MODES.map(({ mode: m, key, Icon }) => (
@@ -240,9 +241,6 @@ export default function Editor() {
       <div className="topright">
         {mode === "code" && (
           <>
-            <button className="round" aria-label={t("code.showCode")} title={t("code.showCode")} onClick={() => setShowCode(true)}>
-              <IconCode />
-            </button>
             {running ? (
               <button className="primary stop" onClick={stopProgram}>
                 <IconStopFilled />
@@ -279,12 +277,12 @@ export default function Editor() {
 
       {mode === "effects" && (
         <>
-          <ClipInspector />
-          <TimelineDock onOpenCode={() => changeMode("code")} />
+          <ClipInspector onOpenTimeline={() => useTimelineUi.getState().setCollapsed(false)} />
+          <TimelineDock />
         </>
       )}
 
-      {mode === "code" && <CodeMode showCode={showCode} onCloseCode={() => setShowCode(false)} />}
+      {mode === "code" && <CodeMode />}
 
       {sensorsOpen && <SensorPanel onClose={() => setSensorsOpen(false)} />}
       {menuOpen && <MenuDialog onClose={() => setMenuOpen(false)} />}

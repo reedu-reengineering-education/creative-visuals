@@ -22,7 +22,7 @@ Next.js · TypeScript · Blockly · runs in the browser · German & English
 
 | ✏️ Trace | ✨ Light | 🧩 Program | 📡 Sense |
 | :-- | :-- | :-- | :-- |
-| Kids trace edges they see on the wall with a finger. Each pen colour is a group they name themselves. | More than 30 light effects, from neon and confetti to scrolling text and glitch, with speed, size, colour and direction. | Blockly blocks decide what happens and when: conditions, loops, variables, buttons. | A senseBox sends temperature, distance and more over Bluetooth. Louder = faster, warmer = redder. |
+| Kids trace edges they see on the wall with a finger. Each pen colour is a group they name themselves. | More than 30 light effects, from neon and confetti to scrolling text and glitch, with speed, size, colour and direction. | Blockly blocks decide what happens and when: conditions, loops, variables, buttons. | A senseBox sends temperature, distance and more over Bluetooth. Closer = faster, warmer = redder. |
 
 ## Four modes
 
@@ -43,7 +43,7 @@ Next.js · TypeScript · Blockly · runs in the browser · German & English
     <td width="50%" valign="top">
       <img src="docs/screenshots/code.png" alt="Code mode with Blockly blocks" />
       <h3>🧩 Code</h3>
-      The show is the baseline; code adds what the data does to it. <code>Verbinde ⟨Lautstärke⟩ → Füllstand</code> lets a sensor steer a setting, <code>Solange ⟨Temperatur &gt; 20⟩</code> switches an effect on while it's warm.
+      The show is the baseline; code adds what the data does to it. <code>Verbinde ⟨Abstand⟩ → Füllstand</code> lets a sensor steer a setting, <code>Solange ⟨Temperatur &gt; 20⟩</code> switches an effect on while it's warm.
     </td>
     <td width="50%" valign="top">
       <img src="docs/screenshots/picker.png" alt="Visual effect picker on a block" />
@@ -59,10 +59,10 @@ Next.js · TypeScript · Blockly · runs in the browser · German & English
 
 Designed for 2–4 hours with grades 5–7. Younger kids can stay in the Effects mode.
 
-1. **Program the senseBox** so it sends its readings (temperature, distance, loudness …).
+1. **Program the senseBox** so it sends its readings (temperature, distance, humidity …).
 2. **Trace the scene** on the wall: a house, a face, a shelf, whatever is there.
 3. **Design a show** in Effects: what should it look like without any data?
-4. **Connect the data** in Code: what changes when it gets louder, warmer or someone comes closer?
+4. **Connect the data** in Code: what changes when it gets warmer, more humid or someone comes closer?
 
 No senseBox at hand? The sensor dialog has sliders to try everything out.
 
@@ -113,7 +113,7 @@ The Bluetooth profile follows **senseBox:bike**: one characteristic per phenomen
 
 ## Status
 
-Lichtwerk is an early prototype. It has been tested in desktop browsers at iPad size, **not yet on a real iPad, projector or senseBox**. Loudness has no Bluetooth characteristic yet, and there is no sync between devices.
+Lichtwerk is an early prototype. It has been tested in desktop browsers at iPad size, **not yet on a real iPad, projector or senseBox**. The senseBox profile is the one from senseBox:bike, and there is no sync between devices.
 
 Ideas for later: sync from an iPad to a laptop output, corner-pin warping when the projector moves, state blocks (traffic light), a step mode for debugging, sharing projects.
 

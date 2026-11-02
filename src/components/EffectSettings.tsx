@@ -17,20 +17,24 @@ export default function EffectSettings({
   effect,
   params,
   onChange,
+  hide = [],
 }: {
   effect: EffectType;
   params: EffectParams;
   onChange: (p: EffectParams) => void;
+  /** settings the block brings itself (e.g. the text of "Zeige …"); also hides the hint */
+  hide?: (keyof EffectParams)[];
 }) {
   const t = useT();
   const def = effectDef(effect);
-  if (!def || (!def.uses.length && !def.hint)) return null;
-  const uses = new Set(def.uses);
+  const uses = new Set(def?.uses.filter((u) => !hide.includes(u)));
+  const hint = hide.length ? undefined : def?.hint;
+  if (!def || (!uses.size && !hint)) return null;
   const set = (p: Partial<EffectParams>) => onChange({ ...params, ...p });
 
   return (
     <div className="fx-settings">
-      {def.hint && <p className="fx-hint">{t(def.hint)}</p>}
+      {hint && <p className="fx-hint">{t(hint)}</p>}
 
       {uses.has("text") && (
         <div className="section">

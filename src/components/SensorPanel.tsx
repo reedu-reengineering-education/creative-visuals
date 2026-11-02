@@ -28,34 +28,22 @@ function Sparkline({ values }: { values: number[] }) {
   );
 }
 
-function SensorRow({ c, simulate }: { c: SensorChannel; simulate: boolean }) {
-  const t = useT();
+/** One sensor as a small card: name, current value, the last values as a line. */
+function SensorCard({ c }: { c: SensorChannel }) {
   const value = useSensors((s) => s.values[c.id]);
   const history = useSensors((s) => s.history[c.id]);
-  const step = c.max - c.min > 50 ? 1 : 0.1;
+  // 0..1 probabilities need two decimals, big ranges none
+  const span = c.max - c.min;
+  const decimals = span > 50 ? 0 : span <= 1 ? 2 : 1;
 
   return (
     <div className="sensor">
-      <div className="sensor-top">
-        <span className="sensor-name">{channelLabel(c)}</span>
-        <span className="sensor-value">
-          {value === undefined ? t("sensors.noValue") : value.toFixed(step < 1 ? 1 : 0)}
-          <small>{c.unit}</small>
-        </span>
-      </div>
+      <span className="sensor-name">{channelLabel(c)}</span>
+      <span className="sensor-value">
+        {value === undefined ? "–" : value.toFixed(decimals)}
+        {c.unit && <small>{c.unit}</small>}
+      </span>
       <Sparkline values={history ?? []} />
-      {simulate && (
-        <input
-          type="range"
-          className="sensor-slider"
-          min={c.min}
-          max={c.max}
-          step={step}
-          value={value ?? (c.min + c.max) / 2}
-          aria-label={channelLabel(c)}
-          onChange={(e) => useSensors.getState().setValue(c.id, Number(e.target.value))}
-        />
-      )}
     </div>
   );
 }
@@ -65,7 +53,9 @@ export default function SensorPanel({ onClose }: { onClose: () => void }) {
   const status = useSensors((s) => s.status);
   const deviceName = useSensors((s) => s.deviceName);
   const error = useSensors((s) => s.error);
-  const discovered = useSensors((s) => s.discovered);
+  // only what the senseBox actually sends
+  const history = useSensors((s) => s.history);
+  const sending = KNOWN_CHANNELS.filter((c) => history[c.id]?.length);
   const [busy, setBusy] = useState(false);
   const supported = bluetoothSupported();
 
@@ -110,13 +100,14 @@ export default function SensorPanel({ onClose }: { onClose: () => void }) {
         <p className="muted">{t("sensors.unsupported")}</p>
       )}
       {error && <p className="muted danger">{t("sensors.error", { msg: error })}</p>}
-      {status === "connected" && <p className="muted">{t("sensors.hint")}</p>}
-      {status !== "connected" && <p className="muted">{t("sensors.simulate")}</p>}
-      <div className="sensor-list">
-        {[...KNOWN_CHANNELS, ...discovered].map((c) => (
-          <SensorRow key={c.id} c={c} simulate={status !== "connected"} />
-        ))}
-      </div>
+      {status === "connected" && <p className="muted">{sending.length ? t("sensors.hint") : t("sensors.waiting")}</p>}
+      {sending.length > 0 && (
+        <div className="sensor-list">
+          {sending.map((c) => (
+            <SensorCard key={c.id} c={c} />
+          ))}
+        </div>
+      )}
     </Dialog>
   );
 }

@@ -6,11 +6,14 @@ import { BleClient } from "@capacitor-community/bluetooth-le";
 import { t, type TKey } from "./i18n";
 
 /**
- * BLE profile – taken from senseBox:bike
- * (sensebox/senseBox-bike-Arduino + reedu-reengineering-education/sensebox-bike-flutter).
+ * BLE profile – exactly the characteristics of senseBox:bike
+ * (github.com/sensebox/senseBox-bike-Arduino, all firmware variants).
  * Every characteristic sends one or more float32 values (little endian) via notify.
+ * Characteristics that aren't listed here are ignored.
  */
 export const SENSEBOX_SERVICE_UUID = "cf06a218-f68e-e0be-ad04-8ebc1eb0bc84";
+/** the battery level sits in the standard battery service (0x180F / 0x2A19) */
+const BATTERY_SERVICE_UUID = "0000180f-0000-1000-8000-00805f9b34fb";
 export const DEVICE_NAME_PREFIX = "senseBox";
 
 export interface SensorChannel {
@@ -24,8 +27,9 @@ export interface SensorChannel {
 }
 
 interface CharacteristicDef {
-  /** null = not part of the senseBox:bike profile yet. */
-  uuid: string | null;
+  uuid: string;
+  /** default: the senseBox service */
+  service?: string;
   /** One channel per float32 value in the payload. */
   channels: SensorChannel[];
 }
@@ -65,18 +69,47 @@ export const CHARACTERISTICS: CharacteristicDef[] = [
     ],
   },
   {
-    // TODO: the senseBox:bike profile has no loudness characteristic yet.
-    // Add its UUID here once the firmware sends one.
-    uuid: null,
-    channels: [{ id: "noise", nameKey: "sensor.noise", unit: "dB", min: 30, max: 110 }],
+    uuid: "8edf8ebb-1246-4329-928d-ee0c91db2389",
+    channels: [
+      { id: "gps_lat", nameKey: "sensor.gps_lat", unit: "°", min: -90, max: 90 },
+      { id: "gps_lng", nameKey: "sensor.gps_lng", unit: "°", min: -180, max: 180 },
+      { id: "speed", nameKey: "sensor.speed", unit: "km/h", min: 0, max: 40 },
+    ],
+  },
+  {
+    // probabilities from the overtaking model (car, bike); -1 while there is no prediction
+    uuid: "fc01c688-2c44-4965-ae18-373af9fed18d",
+    channels: [
+      { id: "overtaking", nameKey: "sensor.overtaking", unit: "", min: 0, max: 1 },
+      { id: "overtaking_bike", nameKey: "sensor.overtaking_bike", unit: "", min: 0, max: 1 },
+    ],
+  },
+  {
+    // probabilities from the surface model
+    uuid: "b944af10-f495-4560-968f-2f0d18cab521",
+    channels: [
+      { id: "surface_asphalt", nameKey: "sensor.surface_asphalt", unit: "", min: 0, max: 1 },
+      { id: "surface_compact", nameKey: "sensor.surface_compact", unit: "", min: 0, max: 1 },
+      { id: "surface_paving", nameKey: "sensor.surface_paving", unit: "", min: 0, max: 1 },
+      { id: "surface_sett", nameKey: "sensor.surface_sett", unit: "", min: 0, max: 1 },
+      { id: "standing", nameKey: "sensor.standing", unit: "", min: 0, max: 1 },
+    ],
+  },
+  {
+    uuid: "b944af10-f495-4560-968f-2f0d18cab523",
+    channels: [{ id: "anomaly", nameKey: "sensor.anomaly", unit: "", min: 0, max: 5 }],
+  },
+  {
+    uuid: "00002a19-0000-1000-8000-00805f9b34fb",
+    service: BATTERY_SERVICE_UUID,
+    channels: [{ id: "battery", nameKey: "sensor.battery", unit: "%", min: 0, max: 100 }],
   },
 ];
 
 export const KNOWN_CHANNELS: SensorChannel[] = CHARACTERISTICS.flatMap((c) => c.channels);
 
 export function channelLabel(c: SensorChannel): string {
-  if (c.nameKey) return t(c.nameKey);
-  return c.label ?? c.id;
+  return c.nameKey ? t(c.nameKey) : (c.label ?? c.id);
 }
 
 const HISTORY = 60;
@@ -84,12 +117,10 @@ const HISTORY = 60;
 interface SensorState {
   values: Record<string, number>;
   history: Record<string, number[]>;
-  discovered: SensorChannel[];
   status: "idle" | "connecting" | "connected" | "error";
   deviceName: string | null;
   error: string | null;
   setValue: (id: string, v: number) => void;
-  addDiscovered: (c: SensorChannel) => void;
   setStatus: (s: SensorState["status"], extra?: { deviceName?: string | null; error?: string | null }) => void;
   /** Replace all values (used by the output window). */
   setAll: (values: Record<string, number>) => void;
@@ -98,7 +129,6 @@ interface SensorState {
 export const useSensors = create<SensorState>((set, get) => ({
   values: {},
   history: {},
-  discovered: [],
   status: "idle",
   deviceName: null,
   error: null,
@@ -109,10 +139,6 @@ export const useSensors = create<SensorState>((set, get) => ({
       history: { ...get().history, [id]: [...h.slice(-(HISTORY - 1)), v] },
     });
   },
-  addDiscovered: (c) => {
-    if (get().discovered.some((d) => d.id === c.id)) return;
-    set({ discovered: [...get().discovered, c] });
-  },
   setStatus: (status, extra) =>
     set({
       status,
@@ -121,10 +147,6 @@ export const useSensors = create<SensorState>((set, get) => ({
     }),
   setAll: (values) => set({ values }),
 }));
-
-export function allChannels(): SensorChannel[] {
-  return [...KNOWN_CHANNELS, ...useSensors.getState().discovered];
-}
 
 /** Web Bluetooth in Chrome/Edge, CoreBluetooth in the iOS app (both through the same plugin). */
 export function bluetoothSupported(): boolean {
@@ -140,26 +162,10 @@ function parseFloats(view: DataView): number[] {
   return out;
 }
 
-function onValues(uuid: string, def: CharacteristicDef | undefined, view: DataView) {
-  const values = parseFloats(view);
-  values.forEach((v, i) => {
-    if (!Number.isFinite(v)) return;
-    let channelId: string;
-    if (def && def.channels[i]) {
-      channelId = def.channels[i].id;
-    } else {
-      // unknown characteristic: still show it, kids can find out what it is
-      const short = uuid.slice(0, 4).toUpperCase();
-      channelId = `ble_${uuid.slice(0, 8)}_${i}`;
-      useSensors.getState().addDiscovered({
-        id: channelId,
-        label: t("sensor.unknown", { id: values.length > 1 ? `${short}.${i + 1}` : short }),
-        unit: "",
-        min: 0,
-        max: 100,
-      });
-    }
-    useSensors.getState().setValue(channelId, v);
+function onValues(def: CharacteristicDef, view: DataView) {
+  parseFloats(view).forEach((v, i) => {
+    const channel = def.channels[i];
+    if (channel && Number.isFinite(v)) useSensors.getState().setValue(channel.id, v);
   });
 }
 
@@ -177,7 +183,7 @@ export async function connectSenseBox(): Promise<void> {
     await BleClient.initialize();
     const device = await BleClient.requestDevice({
       namePrefix: DEVICE_NAME_PREFIX,
-      optionalServices: [SENSEBOX_SERVICE_UUID],
+      optionalServices: [SENSEBOX_SERVICE_UUID, BATTERY_SERVICE_UUID],
     });
     deviceId = device.deviceId;
     await BleClient.connect(device.deviceId, () => {
@@ -185,16 +191,18 @@ export async function connectSenseBox(): Promise<void> {
       useSensors.getState().setStatus("idle", { deviceName: null });
     });
     const services = await BleClient.getServices(device.deviceId);
-    const service = services.find((s) => s.uuid.toLowerCase() === SENSEBOX_SERVICE_UUID);
-    if (!service) throw new Error("senseBox service not found");
+    if (!services.some((s) => s.uuid.toLowerCase() === SENSEBOX_SERVICE_UUID)) throw new Error("senseBox service not found");
 
-    for (const ch of service.characteristics) {
-      if (!ch.properties.notify) continue;
-      const uuid = ch.uuid.toLowerCase();
-      const def = CHARACTERISTICS.find((c) => c.uuid === uuid);
-      await BleClient.startNotifications(device.deviceId, SENSEBOX_SERVICE_UUID, ch.uuid, (view) =>
-        onValues(uuid, def, view),
-      );
+    // only the senseBox:bike characteristics; anything else the box sends is ignored
+    for (const service of services) {
+      const serviceUuid = service.uuid.toLowerCase();
+      for (const ch of service.characteristics) {
+        if (!ch.properties.notify) continue;
+        const uuid = ch.uuid.toLowerCase();
+        const def = CHARACTERISTICS.find((c) => c.uuid === uuid && (c.service ?? SENSEBOX_SERVICE_UUID) === serviceUuid);
+        if (!def) continue;
+        await BleClient.startNotifications(device.deviceId, service.uuid, ch.uuid, (view) => onValues(def, view));
+      }
     }
     useSensors.getState().setStatus("connected", { deviceName: device.name ?? "senseBox" });
   } catch (e) {

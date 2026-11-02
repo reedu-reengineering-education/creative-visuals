@@ -84,11 +84,6 @@ export const IconMenu = () => (
     <path d="M4 7h16M4 12h16M4 17h16" />
   </svg>
 );
-export const IconCode = () => (
-  <svg {...base}>
-    <path d="M8 7l-5 5 5 5M16 7l5 5-5 5" />
-  </svg>
-);
 export const IconSensor = () => (
   <svg {...base}>
     <path d="M7 8.5a7 7 0 0 0 0 7M17 8.5a7 7 0 0 1 0 7" />
@@ -184,7 +179,7 @@ export const EFFECT_PREVIEW: Record<EffectType, () => ReactElement> = {
       </clipPath>
       <rect x="14" y="3" width="28" height="28" rx="3" stroke={L} strokeOpacity="0.5" strokeWidth="2" />
       <circle cx="28" cy="17" r="4" fill={W} clipPath="url(#lw-rad)">
-        <animate attributeName="r" values="2;21;21" keyTimes="0;0.7;1" dur="1.8s" repeatCount="indefinite" />
+        <animate attributeName="r" values="2;21;2" keyTimes="0;0.5;1" calcMode="spline" keySplines="0.45 0 0.55 1;0.45 0 0.55 1" dur="2.4s" repeatCount="indefinite" />
       </circle>
     </svg>
   ),

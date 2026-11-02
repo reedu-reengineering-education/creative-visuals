@@ -118,8 +118,8 @@ export const EFFECTS: EffectDef[] = [
   fx("grid", "tech", [], { dirs: HV }),
   fx("radar", "tech", [], { dirs: H }),
   fx("pixel", "tech", ["color2", "amount"]),
-  fx("text", "text", ["text"], { dirs: ["left", "right"] }),
-  fx("banner", "text", ["text", "color2"], { dirs: ["up", "down"] }),
+  fx("text", "text", ["text"], { dirs: ["left", "right"], hint: "hint.text" }),
+  fx("banner", "text", ["text", "color2"], { dirs: ["up", "down"], hint: "hint.text" }),
   fx("number", "text", ["source"], { base: ["size", "brightness"], hint: "hint.number" }),
   fx("graph", "text", [], { base: ["size", "brightness"], hint: "hint.graph" }),
 ];

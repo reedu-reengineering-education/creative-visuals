@@ -26,10 +26,14 @@
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Lichtwerk verbindet sich per Bluetooth mit der senseBox, damit das Licht auf Sensoren reagieren kann.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>de.reedu.lichtwerk.output</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
-		<false/>
+		<true/>
 		<key>UISceneConfigurations</key>
 		<dict>
 			<key>UIWindowSceneSessionRoleApplication</key>
@@ -42,6 +46,12 @@
 					<key>UISceneStoryboardFile</key>
 					<string>Main</string>
 				</dict>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Output Window</string>
+					<key>UISceneDelegateClassName</key>
+					<string>$(PRODUCT_MODULE_NAME).OutputSceneDelegate</string>
+				</dict>
 			</array>
 		</dict>
 	</dict>
@@ -53,8 +63,6 @@
 	<array>
 		<string>armv7</string>
 	</array>
-	<key>UIRequiresFullScreen</key>
-	<true/>
 	<key>UIStatusBarHidden</key>
 	<true/>
 	<key>UISupportedInterfaceOrientations</key>

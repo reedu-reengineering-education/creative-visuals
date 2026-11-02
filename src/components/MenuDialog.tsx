@@ -5,7 +5,7 @@ import { useProject } from "@/lib/store";
 import { useLang, useT, type Lang } from "@/lib/i18n";
 import { openOutputWindow } from "@/lib/sync";
 import { stopProgram, useRuntime } from "@/lib/runtime";
-import { isNativeApp } from "@/lib/externalDisplay";
+import { ExternalDisplay, isNativeApp } from "@/lib/externalDisplay";
 import type { Aspect, Project } from "@/lib/types";
 import Dialog from "./Dialog";
 
@@ -47,6 +47,16 @@ export default function MenuDialog({ onClose }: { onClose: () => void }) {
         <div className="section">
           <p className="lbl">{t("menu.externalDisplay")}</p>
           <p className="muted">{t(outputConnected ? "menu.externalDisplayConnected" : "menu.externalDisplayHint")}</p>
+          <button
+            style={{ alignSelf: "flex-start" }}
+            onClick={() => {
+              void ExternalDisplay.openWindow().catch(() => {});
+              onClose();
+            }}
+          >
+            {t("menu.outputWindow")}
+          </button>
+          <p className="muted">{t("menu.outputWindowHint")}</p>
         </div>
       ) : (
         <div className="section">

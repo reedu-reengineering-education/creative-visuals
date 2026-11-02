@@ -7,18 +7,20 @@ import { compileProgramJson } from "./blockJson";
 import { isTimelineHat } from "./timeline";
 import { cleanParams, sameParams } from "./params";
 import { blendHue, effectDef } from "./palette";
-import type { Expr, LinkOut, LinkProp, Script, Stmt, Target } from "./program";
+import { joinText, type Expr, type LinkOut, type LinkProp, type Script, type Stmt, type Target } from "./program";
 import type { Project, RuntimeOverride } from "./types";
 
 interface RuntimeState {
   running: boolean;
   paused: boolean;
+  /** real time (epoch ms) at which the program was paused: the stage is drawn frozen at this moment */
+  pausedAt: number | null;
   overrides: Record<string, RuntimeOverride>;
   scripts: Script[];
   /** true while an output window answered within the last few seconds */
   outputConnected: boolean;
-  /** current values of the program's variables (by variable id) */
-  vars: Record<string, number>;
+  /** current values of the program's variables (by variable id); a variable can hold a number or a text */
+  vars: Record<string, number | string>;
   setScripts: (s: Script[]) => void;
   setRunning: (r: boolean) => void;
   setPaused: (p: boolean) => void;
@@ -29,6 +31,7 @@ interface RuntimeState {
 export const useRuntime = create<RuntimeState>((set) => ({
   running: false,
   paused: false,
+  pausedAt: null,
   overrides: {},
   scripts: [],
   outputConnected: false,
@@ -48,6 +51,8 @@ interface Thread {
   wake: number;
   /** total seconds this thread has waited – used to keep "forever" from spinning */
   waited: number;
+  /** how many times a "forever" loop of this thread has started over */
+  pass: number;
 }
 
 interface Ctx {
@@ -55,12 +60,21 @@ interface Ctx {
   thread: Thread;
 }
 
-type Value = number | boolean;
-const asNum = (v: Value) => (typeof v === "boolean" ? (v ? 1 : 0) : v);
-const asBool = (v: Value) => (typeof v === "boolean" ? v : Number.isFinite(v) && v !== 0);
+export type Value = number | boolean | string;
+const asNum = (v: Value): number => {
+  if (typeof v === "boolean") return v ? 1 : 0;
+  if (typeof v === "string") return v.trim() ? Number(v.replace(",", ".")) : NaN;
+  return v;
+};
+const asBool = (v: Value) => {
+  if (typeof v === "boolean") return v;
+  if (typeof v === "string") return v.trim() !== "";
+  return Number.isFinite(v) && v !== 0;
+};
 
 /** How a value looks on the wall. */
 export function formatValue(v: Value): string {
+  if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "✓" : "✗";
   if (!Number.isFinite(v)) return "–";
   return String(Math.round(v * 100) / 100);
@@ -137,9 +151,11 @@ export class Interpreter {
   private dirty = false;
   private sensorState = new Map<string, boolean>();
   private scripts: Script[] = [];
-  private vars = new Map<string, number>();
+  private vars = new Map<string, number | string>();
   private live: LiveValue[] = [];
   private links: Link[] = [];
+  /** per script and shape: in which loop pass its effect was last set (timeline scripts) */
+  private setInPass = new Map<string, Map<string, number>>();
   /** per shape: how a linked speed was blended in, so the animation doesn't jump when the speed changes */
   private speedState = new Map<string, { baseSince: number; since: number; speed: number }>();
   /** virtual clock in ms */
@@ -148,6 +164,8 @@ export class Interpreter {
   private epoch = Date.now();
   private lastReal = 0;
   paused = false;
+  /** while paused: the real time the picture is frozen at */
+  private pausedAt: number | null = null;
   /** virtual time of the thread that is running right now */
   private current = 0;
 
@@ -155,6 +173,7 @@ export class Interpreter {
     this.scripts = scripts;
     this.threads = [];
     this.layers.clear();
+    this.setInPass.clear();
     this.layerOrder = [];
     this.startedAt.clear();
     this.sensorState.clear();
@@ -164,7 +183,8 @@ export class Interpreter {
     this.speedState.clear();
     this.publishVars();
     this.clock = 0;
-    this.epoch = Date.now() - atMs;
+    // while paused, everything is placed relative to the frozen moment
+    this.epoch = (this.pausedAt ?? Date.now()) - atMs;
     this.lastReal = Date.now();
     for (const s of scripts) {
       if (s.trigger.k === "start") this.spawn(s, 0);
@@ -177,6 +197,7 @@ export class Interpreter {
   stop() {
     this.threads = [];
     this.layers.clear();
+    this.setInPass.clear();
     this.layerOrder = [];
     this.startedAt.clear();
     this.live = [];
@@ -190,6 +211,7 @@ export class Interpreter {
   private clearScript(scriptId: string) {
     this.threads = this.threads.filter((t) => t.scriptId !== scriptId);
     this.layers.delete(scriptId);
+    this.setInPass.delete(scriptId);
     this.layerOrder = this.layerOrder.filter((id) => id !== scriptId);
     this.startedAt.delete(scriptId);
     this.live = this.live.filter((lv) => lv.scriptId !== scriptId);
@@ -198,10 +220,34 @@ export class Interpreter {
   }
 
   setPaused(p: boolean) {
+    const now = Date.now();
+    this.lastReal = now;
+    if (p === this.paused) return;
     this.paused = p;
-    this.lastReal = Date.now();
-    // keep the real-time mapping in sync so animations continue smoothly
-    this.epoch = Date.now() - this.clock;
+    if (p) {
+      this.pausedAt = now;
+      return;
+    }
+    // continue where the picture stopped: every effect started `shift` ms later
+    const shift = now - (this.pausedAt ?? now);
+    this.pausedAt = null;
+    this.epoch += shift;
+    for (const [id, layer] of this.layers) {
+      const moved: Record<string, RuntimeOverride> = {};
+      for (const [sid, o] of Object.entries(layer)) moved[sid] = { ...o, since: o.since + shift };
+      this.layers.set(id, moved);
+    }
+    for (const st of this.speedState.values()) {
+      st.baseSince += shift;
+      st.since += shift;
+    }
+    this.dirty = true;
+    this.flush();
+  }
+
+  /** Real time the stage should be drawn at (frozen while paused). */
+  get displayNow(): number {
+    return this.pausedAt ?? Date.now();
   }
 
   key(key: string) {
@@ -243,8 +289,15 @@ export class Interpreter {
         return b === 0 ? NaN : a / b;
       }
       case "cmp": {
-        const a = asNum(this.eval(e.a));
-        const b = asNum(this.eval(e.b));
+        const va = this.eval(e.a);
+        const vb = this.eval(e.b);
+        const a = asNum(va);
+        const b = asNum(vb);
+        // texts that aren't numbers: "=" compares the words (ignoring case), > and < the alphabet
+        if ((typeof va === "string" && !Number.isFinite(a)) || (typeof vb === "string" && !Number.isFinite(b))) {
+          const c = formatValue(va).trim().localeCompare(formatValue(vb).trim(), undefined, { sensitivity: "base" });
+          return e.op === ">" ? c > 0 : e.op === "<" ? c < 0 : c === 0;
+        }
         if (e.op === ">") return a > b;
         if (e.op === "<") return a < b;
         return Math.abs(a - b) < 1e-9;
@@ -255,10 +308,14 @@ export class Interpreter {
           : asBool(this.eval(e.a)) || asBool(this.eval(e.b));
       case "not":
         return !asBool(this.eval(e.a));
+      case "text":
+        return e.v;
+      case "join":
+        return joinText(e.parts.map((p) => formatValue(this.eval(p))));
     }
   }
 
-  private setVar(id: string, v: number) {
+  private setVar(id: string, v: number | string) {
     if (this.vars.get(id) === v) return;
     this.vars.set(id, v);
     this.publishVars();
@@ -294,34 +351,49 @@ export class Interpreter {
   private spawn(script: Script, at: number) {
     // restart an already running copy of this script (like Scratch does)
     this.threads = this.threads.filter((t) => t.scriptId !== script.id);
-    const thread: Thread = { scriptId: script.id, gen: null as unknown as Thread["gen"], wake: at, waited: 0 };
+    const thread: Thread = { scriptId: script.id, gen: null as unknown as Thread["gen"], wake: at, waited: 0, pass: 0 };
     thread.gen = this.run(script.body, { thisId: null, thread });
     this.threads.push(thread);
     this.startedAt.set(script.id, at);
     this.layers.set(script.id, {});
+    this.setInPass.delete(script.id);
     this.live = this.live.filter((lv) => lv.scriptId !== script.id);
     this.links = this.links.filter((ln) => ln.scriptId !== script.id);
     this.layerOrder = [...this.layerOrder.filter((id) => id !== script.id), script.id];
     this.dirty = true;
   }
 
-  private setEffect(scriptId: string, ids: string[], st: Extract<Stmt, { k: "effect" }>) {
+  private setEffect(thread: Thread, ids: string[], st: Extract<Stmt, { k: "effect" }>) {
+    const scriptId = thread.scriptId;
     const since = this.epoch + this.current;
     const layer = this.layers.get(scriptId) ?? {};
+    // timeline shows replay like a video: in a new loop pass the effects start over (e.g. "Malen" draws again)
+    const timeline = this.scripts.find((s) => s.id === scriptId)?.timeline ?? false;
+    const passes = this.setInPass.get(scriptId) ?? new Map<string, number>();
+    this.setInPass.set(scriptId, passes);
     // a new effect replaces a live number on these shapes
     for (const lv of this.live) if (lv.scriptId === scriptId) lv.ids = lv.ids.filter((id) => !ids.includes(id));
     this.live = this.live.filter((lv) => lv.ids.length);
     for (const id of ids) {
       const prev = layer[id];
+      const samePass = !timeline || passes.get(id) === thread.pass;
+      passes.set(id, thread.pass);
       // same effect again (e.g. inside "forever"): keep it running instead of restarting it every frame
       if (
+        samePass &&
         prev &&
         prev.effect === st.effect &&
         prev.color === st.color &&
         prev.sequence === st.sequence &&
-        sameParams(prev.params, st.params)
-      )
+        sameParams({ ...prev.params, value: undefined }, { ...st.params, value: undefined })
+      ) {
+        // only the shown text changed ("Zeige …" in a loop): keep the animation going
+        if (prev.params?.value !== st.params?.value) {
+          layer[id] = { ...prev, params: { ...prev.params, value: st.params?.value } };
+          this.dirty = true;
+        }
         continue;
+      }
       layer[id] = { effect: st.effect, color: st.color, since, sequence: st.sequence, params: cleanParams(st.params) };
       this.dirty = true;
     }
@@ -332,7 +404,7 @@ export class Interpreter {
     for (const st of body) {
       switch (st.k) {
         case "effect":
-          this.setEffect(ctx.thread.scriptId, resolveTarget(useProject.getState().project, st.target, ctx), st);
+          this.setEffect(ctx.thread, resolveTarget(useProject.getState().project, st.target, ctx), st);
           break;
         case "wait": {
           const s = st.min === st.max ? st.min : st.min + Math.random() * (st.max - st.min);
@@ -349,6 +421,7 @@ export class Interpreter {
           for (;;) {
             const before = ctx.thread.waited;
             yield* this.run(st.body, ctx);
+            ctx.thread.pass++;
             if (ctx.thread.waited === before) yield 0; // never block the browser
           }
         case "forEach": {
@@ -372,21 +445,26 @@ export class Interpreter {
             if (ctx.thread.waited === before) yield 0; // never block the browser
           }
           break;
-        case "setVar":
-          this.setVar(st.id, asNum(this.eval(st.value)));
+        case "setVar": {
+          const v = this.eval(st.value);
+          this.setVar(st.id, typeof v === "string" ? v : asNum(v));
           break;
-        case "changeVar":
-          this.setVar(st.id, (this.vars.get(st.id) ?? 0) + asNum(this.eval(st.by)));
+        }
+        case "changeVar": {
+          // a variable holding a text (that isn't a number) starts again from 0
+          const cur = asNum(this.vars.get(st.id) ?? 0);
+          this.setVar(st.id, (Number.isFinite(cur) ? cur : 0) + asNum(this.eval(st.by)));
           break;
+        }
         case "show": {
           const ids = resolveTarget(useProject.getState().project, st.target, ctx);
           const text = formatValue(this.eval(st.value));
-          this.setEffect(ctx.thread.scriptId, ids, {
+          this.setEffect(ctx.thread, ids, {
             k: "effect",
             target: st.target,
-            effect: "number",
+            effect: st.effect,
             color: st.color,
-            params: { value: text },
+            params: { ...st.params, value: text },
           });
           this.live.push({ scriptId: ctx.thread.scriptId, ids, value: st.value, text });
           break;
@@ -558,13 +636,14 @@ export function restartKeepingTime() {
 }
 
 export function stopProgram() {
+  setPaused(false);
   interpreter.stop();
   useRuntime.getState().setRunning(false);
 }
 
 export function setPaused(p: boolean) {
   interpreter.setPaused(p);
-  useRuntime.getState().setPaused(p);
+  useRuntime.setState({ paused: p, pausedAt: p ? interpreter.displayNow : null });
 }
 
 /** Jump to a time of the start timeline. */

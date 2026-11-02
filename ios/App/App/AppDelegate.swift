@@ -36,10 +36,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        NSLog("[Lichtwerk] connecting scene with role %@", connectingSceneSession.role.rawValue)
         // A projector or monitor: show the output there, the iPad keeps the editor.
         if isExternalDisplay(connectingSceneSession.role) {
             let config = UISceneConfiguration(name: "External Display", sessionRole: connectingSceneSession.role)
-            config.delegateClass = ExternalDisplaySceneDelegate.self
+            config.delegateClass = OutputSceneDelegate.self
+            return config
+        }
+        // The output as a second window (Stage Manager), opened from the menu.
+        let activities = options.userActivities.map(\.activityType) + [connectingSceneSession.stateRestorationActivity?.activityType]
+        if activities.contains(ExternalDisplay.outputWindowActivity) {
+            let config = UISceneConfiguration(name: ExternalDisplay.outputWindowConfiguration, sessionRole: connectingSceneSession.role)
+            config.delegateClass = OutputSceneDelegate.self
             return config
         }
         let config = UISceneConfiguration(name: "Default Configuration",

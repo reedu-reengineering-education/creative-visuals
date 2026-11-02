@@ -7,8 +7,7 @@ import * as En from "blockly/msg/en";
 import { useProject } from "@/lib/store";
 import { useLang, useT } from "@/lib/i18n";
 import { formatValue, useRuntime } from "@/lib/runtime";
-import { programToCode, type Script } from "@/lib/program";
-import { allChannels, channelLabel } from "@/lib/sensors";
+import type { Script } from "@/lib/program";
 import { renderStage } from "@/lib/render";
 import { aspectRatio } from "@/lib/store";
 import {
@@ -22,8 +21,8 @@ import {
 } from "./blocks/defs";
 import { emptyProgram, isTimelineHat } from "@/lib/timeline";
 import { compileProgramJson, variablesOf } from "@/lib/blockJson";
-import Dialog from "./Dialog";
 import ButtonPad from "./ButtonPad";
+import BlocklyDialogs, { installBlocklyDialogs } from "./BlocklyDialogs";
 
 const compile = (ws: Blockly.Workspace) => compileProgramJson(Blockly.serialization.workspaces.save(ws), isTimelineHat);
 
@@ -33,7 +32,7 @@ const LOOP_TYPES = new Set(["lw_forever", "lw_repeat", "lw_repeat_until"]);
 const ONCE_ROOTS = new Set(["lw_on_start", "lw_on_key", "lw_on_button", "lw_when", "lw_while"]);
 
 /** The Blockly editor. Saves the workspace into the project and restarts a running program on changes. */
-export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean; onCloseCode: () => void }) {
+export default function CodeMode() {
   const t = useT();
   const lang = useLang((s) => s.lang);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -43,6 +42,7 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
   useEffect(() => {
     registerBlocks();
     registerRenderer();
+    installBlocklyDialogs();
     Blockly.setLocale((lang === "de" ? De : En) as unknown as { [key: string]: string });
     const host = hostRef.current!;
     const ws = Blockly.inject(host, {
@@ -51,6 +51,8 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
       renderer: "lichtwerk",
       trashcan: false,
       sounds: false,
+      // type straight into the field on the block, also on the iPad (Blockly's default there is a prompt window)
+      modalInputs: false,
       move: { scrollbars: true, drag: true, wheel: true },
       zoom: { controls: false, wheel: true, startScale: 1, maxScale: 2, minScale: 0.4, scaleSpeed: 1.15, pinch: true },
       grid: { spacing: 28, length: 2, colour: "#24272D", snap: false },
@@ -114,22 +116,8 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
   }, [lang]);
 
   const running = useRuntime((s) => s.running);
-  const groups = useProject((s) => s.project.groups);
   const program = useProject((s) => s.project.program);
   const variables = variablesOf(program);
-
-  const code = programToCode(
-    scripts,
-    {
-      group: (id) => groups.find((g) => g.id === id)?.name ?? "?",
-      sensor: (id) => {
-        const c = allChannels().find((x) => x.id === id);
-        return c ? channelLabel(c) : id;
-      },
-      variable: (id) => variables.find((v) => v.id === id)?.name ?? "?",
-    },
-    variables.map((v) => v.id),
-  );
 
   return (
     <>
@@ -150,12 +138,8 @@ export default function CodeMode({ showCode, onCloseCode }: { showCode: boolean;
         <VariableMonitor variables={variables} />
       </section>
 
-      {showCode && (
-        <Dialog title={t("code.showCode")} onClose={onCloseCode} wide closeLabel={t("menu.close")}>
-          <p className="muted">{t("code.generated")}</p>
-          <pre className="code-view">{code || "// …"}</pre>
-        </Dialog>
-      )}
+      <BlocklyDialogs />
+
     </>
   );
 }
@@ -188,7 +172,7 @@ function PreviewCanvas() {
         view: "light",
         width: w,
         height: h,
-        now: Date.now(),
+        now: rt.pausedAt ?? Date.now(),
         badges: false,
       });
     };

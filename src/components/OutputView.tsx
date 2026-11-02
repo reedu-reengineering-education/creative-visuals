@@ -13,7 +13,7 @@ import type { Project, RuntimeOverride } from "@/lib/types";
 /** The projector window: only light, no interface. Controlled by the editor via BroadcastChannel. */
 export default function OutputView() {
   const t = useT();
-  const data = useRef<{ project: Project; overrides: Record<string, RuntimeOverride>; running: boolean } | null>(null);
+  const data = useRef<{ project: Project; overrides: Record<string, RuntimeOverride>; running: boolean; pausedAt?: number | null } | null>(null);
   const post = useRef<(m: SyncMessage) => void>(() => {});
   const [ready, setReady] = useState(false);
   const [hint, setHint] = useState(true);
@@ -30,7 +30,7 @@ export default function OutputView() {
           data.current = { ...data.current, project: m.project };
           break;
         case "runtime":
-          data.current = { ...data.current, running: m.running, overrides: m.overrides };
+          data.current = { ...data.current, running: m.running, overrides: m.overrides, pausedAt: m.pausedAt };
           break;
         case "sensors":
           useSensors.getState().setAll(m.values);

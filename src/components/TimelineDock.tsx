@@ -17,7 +17,7 @@ import {
   type Timeline,
 } from "@/lib/timeline";
 import { clipKey, deleteScript, saveTimeline, useTimelineUi, viewId } from "@/lib/timelineUi";
-import { EFFECT_PREVIEW, IconBlocks, IconPlus, IconTrash } from "./Icons";
+import { EFFECT_PREVIEW, IconPlus, IconTrash } from "./Icons";
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -51,16 +51,14 @@ interface Drag {
  * everything that reacts (buttons, keys, sensors, variables) is programmed
  * in the code mode.
  */
-export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void }) {
+export default function TimelineDock() {
   const t = useT();
   const lang = useLang((s) => s.lang);
   const program = useProject((s) => s.project.program);
   const groups = useProject((s) => s.project.groups);
   const strokes = useProject((s) => s.project.strokes);
-  const selectedStrokeId = useProject((s) => s.selectedStrokeId);
-  const running = useRuntime((s) => s.running);
-  const paused = useRuntime((s) => s.paused);
   const ui = useTimelineUi();
+  const paused = useRuntime((s) => s.paused);
 
   const views = useMemo(
     () => parseProgram(program).filter((v) => v.kind === "timeline" && v.timeline.trigger.k === "start"),
@@ -84,21 +82,11 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active && viewId(active)]);
 
-  // the effects mode always plays
+  // the effects mode plays right away; pausing is only for here (Show and Code never start paused)
   useEffect(() => {
     if (!useRuntime.getState().running) void startProgram();
+    return () => setPaused(false);
   }, []);
-
-  // tapping a shape on the wall selects its row
-  useEffect(() => {
-    if (!selectedStrokeId) return;
-    const s = strokes.find((x) => x.id === selectedStrokeId);
-    if (!s) return;
-    const count = strokes.filter((x) => x.groupId === s.groupId).length;
-    if (count > 1) useTimelineUi.getState().toggleExpanded(s.groupId, true);
-    useTimelineUi.getState().selectRow(s.groupId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStrokeId]);
 
   // track width
   useLayoutEffect(() => {
@@ -257,46 +245,57 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
   }, [duration]);
 
   const canDelete = views.length > 1;
+  // with exactly one show (the normal case) the open timeline needs no header row
+  const showHead = ui.collapsed || views.length !== 1;
+  const toggle = (
+    <button
+      className={ui.collapsed ? "chip dock-toggle" : "round small"}
+      aria-label={ui.collapsed ? t("tl.expand") : t("tl.collapse")}
+      aria-expanded={!ui.collapsed}
+      title={ui.collapsed ? t("tl.expand") : t("tl.collapse")}
+      onClick={() => ui.setCollapsed(!ui.collapsed)}
+    >
+      {ui.collapsed && <span>{t("tl.open")}</span>}
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+        <path d={ui.collapsed ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} />
+      </svg>
+    </button>
+  );
 
   return (
     <section className={`dock bar${ui.collapsed ? " collapsed" : ""}`} aria-label={t("mode.effects")}>
-      <div className="dock-head">
-        <div className="tabs" role="tablist">
-          {views.map((v, i) => {
-            const id = viewId(v);
-            const on = active && viewId(active) === id;
-            return (
-              <button key={id} role="tab" aria-selected={!!on} className={`tab${on ? " on" : ""}`} onClick={() => ui.setActive(id)}>
-                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                  <path d="M7 4.5v15l12-7.5z" />
-                </svg>
-                <span>{views.length > 1 ? `${t("tl.start")} ${i + 1}` : t("tl.start")}</span>
-              </button>
-            );
-          })}
-          {/* one show is enough; "Neue Show" only appears when the program has none */}
-          {views.length === 0 && (
-            <button className="tab add" onClick={addShow}>
-              <IconPlus />
-              <span>{t("tl.addShow")}</span>
-            </button>
+      {showHead && (
+        <div className="dock-head">
+          {/* collapsed: just a hint – effects are picked by tapping a shape */}
+          {ui.collapsed ? (
+            <p className="dock-hint">{t("fx.tapHint")}</p>
+          ) : (
+            <div className="tabs" role="tablist">
+              {/* tabs only for older programs with several shows; "Neue Show" only when there is none */}
+              {views.length > 1 &&
+                views.map((v, i) => {
+                  const id = viewId(v);
+                  const on = active && viewId(active) === id;
+                  return (
+                    <button key={id} role="tab" aria-selected={!!on} className={`tab${on ? " on" : ""}`} onClick={() => ui.setActive(id)}>
+                      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M7 4.5v15l12-7.5z" />
+                      </svg>
+                      <span>{`${t("tl.start")} ${i + 1}`}</span>
+                    </button>
+                  );
+                })}
+              {views.length === 0 && (
+                <button className="tab add" onClick={addShow}>
+                  <IconPlus />
+                  <span>{t("tl.addShow")}</span>
+                </button>
+              )}
+            </div>
           )}
+          {toggle}
         </div>
-        <button className="chip dock-more" onClick={onOpenCode} title={t("tl.moreInCode")}>
-          <IconBlocks />
-          <span>{t("tl.moreInCode")}</span>
-        </button>
-        <button
-          className="round small"
-          aria-label={ui.collapsed ? t("tl.expand") : t("tl.collapse")}
-          title={ui.collapsed ? t("tl.expand") : t("tl.collapse")}
-          onClick={() => ui.setCollapsed(!ui.collapsed)}
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-            <path d={ui.collapsed ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} />
-          </svg>
-        </button>
-      </div>
+      )}
 
       {!ui.collapsed && !tl && <p className="muted tl-hint">{t("tl.noShow")}</p>}
 
@@ -305,14 +304,11 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
           <div className="dock-tools">
             <button
               className="round small"
-              aria-label={paused || !running ? t("tl.play") : t("tl.pause")}
-              title={paused || !running ? t("tl.play") : t("tl.pause")}
-              onClick={() => {
-                if (!running) void startProgram();
-                setPaused(running ? !paused : false);
-              }}
+              aria-label={paused ? t("tl.play") : t("tl.pause")}
+              title={paused ? t("tl.play") : t("tl.pause")}
+              onClick={() => setPaused(!paused)}
             >
-              {paused || !running ? (
+              {paused ? (
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
                   <path d="M7 4.5v15l12-7.5z" />
                 </svg>
@@ -341,10 +337,6 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
                 +
               </button>
             </label>
-            <label className="toggle">
-              <input type="checkbox" checked={tl.loop} onChange={(e) => update({ ...tl, loop: e.target.checked })} />
-              {t("tl.loop")}
-            </label>
             {canDelete && (
               <button
                 className={`round small${confirmDelete ? " danger-bg" : ""}`}
@@ -355,6 +347,7 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
                 <IconTrash />
               </button>
             )}
+            {!showHead && toggle}
           </div>
 
           <div className="tl">

@@ -122,7 +122,8 @@ function dataOf(
 
 /** The text a text or number effect shows. `seconds` = real seconds since the effect started. */
 function contentOf(o: RenderOptions, effect: EffectType, p: EffectParams, seconds: number): string {
-  if (effect === "text" || effect === "banner") return p.text?.trim() || "✨";
+  // `value` is set by "Zeige … als Laufschrift" in code and wins over the text from the settings
+  if (effect === "text" || effect === "banner") return (p.value ?? p.text)?.trim() || "✨";
   if (effect !== "number") return "";
   if (p.value !== undefined) return p.value;
   if (p.source === CLOCK) {
@@ -165,6 +166,7 @@ function drawEffect(
     lw,
     size: params.size ?? 1,
     seed: hashString(s.id) % 997,
+    id: s.id,
     color2: r.color2,
     dir,
     text: r.text,

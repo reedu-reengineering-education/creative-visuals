@@ -60,6 +60,14 @@ textarea {
   overflow: hidden;
 }
 
+/* the editor screens get the same faint dot grid as the Blockly workspace;
+   the stage itself stays black (it is the projection), Show mode and the output have no dots */
+.app.dotted {
+  background-image: radial-gradient(circle, #24272d 1.1px, transparent 1.4px);
+  background-size: 28px 28px;
+  background-position: 14px 14px;
+}
+
 /* ---------- stage ---------- */
 
 .stage-wrap {
@@ -101,10 +109,6 @@ textarea {
   height: 8px;
   border-radius: 50%;
   background: var(--accent);
-}
-
-.status .dot.off {
-  background: #5a5f68;
 }
 
 .modebar {
@@ -640,26 +644,11 @@ textarea {
   margin: 0;
 }
 
-.code-view {
-  margin: 0;
-  padding: 16px;
-  border-radius: 14px;
-  background: #0b0c0e;
-  border: 1px solid var(--line);
-  color: #d7f5ec;
-  font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre;
-  overflow: auto;
-  max-height: 60vh;
-  -webkit-user-select: text;
-  user-select: text;
-}
-
 /* sensors */
 
 .sensor-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 8px;
 }
 
@@ -667,30 +656,26 @@ textarea {
   border: 1px solid var(--line);
   background: var(--surface-2);
   border-radius: 16px;
-  padding: 12px 14px;
+  padding: 10px 12px 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.sensor-top {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+  gap: 2px;
+  min-width: 0;
 }
 
 .sensor-name {
-  flex: 1;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 500;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sensor-value {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  min-width: 90px;
-  text-align: right;
 }
 
 .sensor-value small {
@@ -847,12 +832,15 @@ input[type="range"] {
 
 .lichtwerk-blockly .blocklyToolboxCategoryContainer {
   outline: none;
+  /* rows shrink a little on short screens (iPad landscape) so all categories fit */
+  flex: 0 1 64px;
+  min-height: 50px;
 }
 
 .lichtwerk-blockly .lw-cat {
   border-left: none !important;
   padding: 0 !important;
-  height: 64px;
+  height: 100%;
   border-radius: 16px;
   background: transparent !important;
   cursor: pointer;
@@ -872,7 +860,7 @@ input[type="range"] {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .lichtwerk-blockly .lw-cat-icon {
@@ -892,6 +880,7 @@ input[type="range"] {
 .lw-cat-logic { background-color: #a9d89b !important; }
 .lw-cat-variables { background-color: #e3afc6 !important; }
 .lw-cat-links { background-color: #9fd0dc !important; }
+.lw-cat-text { background-color: #e6de96 !important; }
 
 .lichtwerk-blockly .blocklyToolboxCategoryLabel {
   font: 500 13px var(--font) !important;
@@ -1029,6 +1018,69 @@ input[type="range"] {
 
 .dock.collapsed {
   height: 64px;
+}
+
+.dock-hint {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding-left: 8px;
+  color: var(--text-3);
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dock-toggle {
+  height: 40px;
+  flex: none;
+  gap: 6px;
+}
+
+/* open timeline: the stage shrinks into the space above it and next to the panel, so nothing is hidden */
+.app.effects:not(.dock-collapsed) .stage-wrap {
+  top: 84px;
+  bottom: 352px;
+  left: 20px;
+  right: 380px;
+}
+
+@media (max-width: 900px) {
+  .app.effects:not(.dock-collapsed) .stage-wrap {
+    right: 20px;
+  }
+}
+
+/* folded panel: just the title bar, the stage stays visible */
+.panel.min {
+  bottom: auto !important;
+  width: auto;
+  min-width: 260px;
+  padding-block: 12px;
+}
+
+.clip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fx-hint .link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .dock-head {
@@ -1173,8 +1225,15 @@ input[type="range"] {
 .tl-rows {
   flex: 1;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* no scrollbar: it would make the tracks narrower than the ruler (and the clips overflow sideways) */
+  scrollbar-width: none;
+}
+
+.tl-rows::-webkit-scrollbar {
+  display: none;
 }
 
 .tl-label {
@@ -1660,20 +1719,6 @@ input[type="range"] {
   fill: rgba(255, 255, 255, 0.8) !important;
 }
 
-/* "more in code" link in the timeline header */
-.dock-more {
-  height: 36px;
-  font-size: 13px;
-  color: var(--text-3);
-  margin-left: auto;
-  flex: none;
-}
-
-.dock-more svg {
-  width: 16px;
-  height: 16px;
-}
-
 /* on-screen buttons for "Wenn Knopf … gedrückt" */
 .button-pad {
   display: flex;
@@ -1737,11 +1782,6 @@ input[type="range"] {
 .var-chip b {
   color: #e3afc6;
   font-weight: 700;
-}
-
-.sensor-slider {
-  width: 100%;
-  accent-color: var(--accent);
 }
 
 /* "Neue Variable" button in the variables flyout */

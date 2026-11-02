@@ -4,11 +4,13 @@ import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor
 
 /**
  * iOS app only: a projector connected by cable or AirPlay gets its own scene that shows /output
- * (ios/App/App/ExternalDisplay.swift). Messages between editor and output go through native code.
+ * (ios/App/App/ExternalDisplay.swift). With Stage Manager (extended display) `openWindow` opens /output
+ * as a second window instead. Messages between editor and outputs go through native code.
  */
 interface ExternalDisplayPlugin {
   send(options: { json: string }): Promise<void>;
   isConnected(): Promise<{ connected: boolean }>;
+  openWindow(): Promise<void>;
   addListener(event: "message", cb: (e: { json: string }) => void): Promise<PluginListenerHandle>;
   addListener(event: "display", cb: (e: { connected: boolean }) => void): Promise<PluginListenerHandle>;
 }

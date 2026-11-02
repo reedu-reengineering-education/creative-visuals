@@ -41,12 +41,14 @@ abstract class GridField extends Blockly.FieldDropdown {
   }
 }
 
-function EffectGrid({ value, pick }: { value: string; pick: (v: string) => void }) {
-  const [cat, setCat] = useState<EffectCategory>(EFFECTS.find((e) => e.value === value)?.category ?? "line");
+function EffectGrid({ value, pick, only }: { value: string; pick: (v: string) => void; only?: readonly EffectType[] }) {
+  const list = only ? EFFECTS.filter((e) => only.includes(e.value)) : EFFECTS;
+  const cats = EFFECT_CATEGORIES.filter((c) => list.some((e) => e.category === c.value));
+  const [cat, setCat] = useState<EffectCategory>(list.find((e) => e.value === value)?.category ?? cats[0]?.value ?? "line");
   return (
     <div className="lw-grid" aria-label={t("effects.effect")}>
-      <div className="cats lw-grid-cats" role="tablist">
-        {EFFECT_CATEGORIES.map((c) => (
+      <div className="cats lw-grid-cats" role="tablist" style={cats.length < 2 ? { display: "none" } : undefined}>
+        {cats.map((c) => (
           <button
             key={c.value}
             role="tab"
@@ -59,7 +61,7 @@ function EffectGrid({ value, pick }: { value: string; pick: (v: string) => void 
         ))}
       </div>
       <div className="lw-grid-tiles" role="listbox">
-        {EFFECTS.filter((e) => e.category === cat).map((e) => {
+        {list.filter((e) => e.category === cat).map((e) => {
           const Preview = EFFECT_PREVIEW[e.value];
           return (
             <button
@@ -123,8 +125,11 @@ function ColorGrid({ value, pick, specials = true }: { value: string; pick: (v: 
 }
 
 export class FieldEffectGrid extends GridField {
+  /** offer only these effects (the menu generator should list the same ones) */
+  only?: readonly EffectType[];
+
   protected renderGrid(value: string, pick: (v: string) => void) {
-    return <EffectGrid value={value} pick={pick} />;
+    return <EffectGrid value={value} pick={pick} only={this.only} />;
   }
 }
 
@@ -145,9 +150,9 @@ const short = (s: string, n: number) => {
 };
 
 /** What the field shows on the block: ⚙ plus everything that isn't the default. */
-export function settingsSummary(effect: EffectType, p: EffectParams): string {
+export function settingsSummary(effect: EffectType, p: EffectParams, hide: (keyof EffectParams)[] = []): string {
   const def = effectDef(effect);
-  const uses = new Set(def?.uses ?? []);
+  const uses = new Set((def?.uses ?? []).filter((u) => !hide.includes(u)));
   const parts: string[] = [];
   if (uses.has("text")) parts.push(p.text ? `"${short(p.text, 14)}"` : t("param.text.empty"));
   if (uses.has("source")) parts.push(p.source === CLOCK ? "🕒" : "⏱");
@@ -176,10 +181,12 @@ function SettingsPopup({
   effect,
   initial,
   onChange,
+  hide,
 }: {
   effect: EffectType;
   initial: EffectParams;
   onChange: (p: EffectParams) => void;
+  hide?: (keyof EffectParams)[];
 }) {
   const [params, setParams] = useState(initial);
   const def = effectDef(effect);
@@ -190,6 +197,7 @@ function SettingsPopup({
       </p>
       <EffectSettings
         effect={effect}
+        hide={hide}
         params={params}
         onChange={(p) => {
           const c = cleanParams(p);
@@ -208,9 +216,16 @@ function SettingsPopup({
  */
 export class FieldSettings extends Blockly.FieldTextInput {
   private root: Root | null = null;
+  /** settings the block brings itself, not offered here */
+  hide: (keyof EffectParams)[] = [];
 
   constructor(value = "") {
     super(value);
+  }
+
+  /** Does the effect have anything to set here? */
+  hasSettings(): boolean {
+    return (effectDef(this.effect())?.uses ?? []).some((u) => !this.hide.includes(u));
   }
 
   private effect(): EffectType {
@@ -223,7 +238,7 @@ export class FieldSettings extends Blockly.FieldTextInput {
   }
 
   protected override getText_(): string {
-    return settingsSummary(this.effect(), parseParams(this.getValue()));
+    return settingsSummary(this.effect(), parseParams(this.getValue()), this.hide);
   }
 
   protected override showEditor_() {
@@ -236,6 +251,7 @@ export class FieldSettings extends Blockly.FieldTextInput {
         <SettingsPopup
           effect={this.effect()}
           initial={parseParams(this.getValue())}
+          hide={this.hide}
           onChange={(p) => this.setValue(encodeParams(p))}
         />,
       ),

@@ -12,10 +12,12 @@
  * - Data effects no longer pick a sensor themselves: a "Zahl" with a sensor
  *   becomes "Zeige ⟨Messwert⟩ auf …"; Füllstand/Kurve lose the sensor (they
  *   are connected with "Verbinde" in code now).
+ * - The start show always repeats (the effects mode has no "Wiederholen"
+ *   switch any more).
  */
 import { topBlocks, type BlockJson, type ProgramJson } from "./blockJson";
 import { encodeParams, parseParams } from "./params";
-import { emptyProgram, emptyTimeline, nextScriptY, upsertTimeline, type Clip } from "./timeline";
+import { emptyProgram, emptyTimeline, nextScriptY, parseProgram, upsertTimeline, type Clip } from "./timeline";
 import type { ColorSpec, EffectParams, EffectType, Project, Sequence } from "./types";
 
 interface StaticEffect {
@@ -58,7 +60,7 @@ const compare = (sensor: unknown, op: unknown, value: unknown): BlockJson => ({
   type: "lw_compare",
   fields: { OP: op === "<" ? "<" : ">" },
   inputs: {
-    A: { block: { type: "lw_sensor_value", fields: { SENSOR: String(sensor ?? "noise") } } },
+    A: { block: { type: "lw_sensor_value", fields: { SENSOR: String(sensor ?? "temperature") } } },
     B: { shadow: { type: "lw_num", fields: { NUM: Number(value) || 0 } } },
   },
 });
@@ -154,6 +156,17 @@ export function migrateProject(stored: StoredProject): Project {
     aspect: stored.aspect,
     groups: stored.groups,
     strokes: stored.strokes,
-    program: migrateProgram(migrateStaticEffects(stored)),
+    program: loopStartShows(migrateProgram(migrateStaticEffects(stored))),
   };
+}
+
+/** Start timelines that were set to play only once repeat again. */
+function loopStartShows(program: unknown): unknown {
+  let p = program;
+  for (const v of parseProgram(program)) {
+    if (v.kind === "timeline" && v.timeline.trigger.k === "start" && !v.timeline.loop) {
+      p = upsertTimeline(p, { ...v.timeline, loop: true });
+    }
+  }
+  return p;
 }

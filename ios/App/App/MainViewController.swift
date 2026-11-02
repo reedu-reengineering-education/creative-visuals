@@ -6,4 +6,8 @@ class MainViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(ExternalDisplayPlugin())
     }
+
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        LandscapeOnly.orientations
+    }
 }

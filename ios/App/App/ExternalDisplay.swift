@@ -2,31 +2,48 @@ import UIKit
 import WebKit
 import Capacitor
 
-/// Projector support: when a display is connected (HDMI/USB-C adapter or AirPlay), iOS hands the app
-/// a separate scene for it. That scene shows /output while the iPad keeps the editor, like Keynote.
-/// The two web views exchange the same SyncMessages the web version sends over BroadcastChannel
+/// Projector support: when a display is connected (HDMI/USB-C adapter or AirPlay) and the iPad mirrors,
+/// iOS hands the app a separate scene for it. That scene shows /output while the iPad keeps the editor,
+/// like Keynote. With Stage Manager the display is extended instead and gets no such scene, so the editor
+/// can open /output as a second window that the user drags onto the monitor.
+/// The web views exchange the same SyncMessages the web version sends over BroadcastChannel
 /// (see src/lib/sync.ts); this class relays them.
 final class ExternalDisplay {
     static let shared = ExternalDisplay()
+    static let outputWindowActivity = "de.reedu.lichtwerk.output"
+    static let outputWindowConfiguration = "Output Window"
 
     weak var plugin: ExternalDisplayPlugin?
-    private weak var outputWebView: WKWebView?
+    private let outputWebViews = NSHashTable<WKWebView>.weakObjects()
 
-    var isConnected: Bool { outputWebView != nil }
+    var isConnected: Bool { outputWebViews.count > 0 }
 
     func attach(_ webView: WKWebView) {
-        outputWebView = webView
+        outputWebViews.add(webView)
         plugin?.notifyListeners("display", data: ["connected": true])
     }
 
-    func detach() {
-        outputWebView = nil
-        plugin?.notifyListeners("display", data: ["connected": false])
+    func detach(_ webView: WKWebView) {
+        outputWebViews.remove(webView)
+        plugin?.notifyListeners("display", data: ["connected": isConnected])
     }
 
-    /// Editor -> output. `json` is a serialised SyncMessage, which is also a valid JS literal.
+    /// Editor -> outputs. `json` is a serialised SyncMessage, which is also a valid JS literal.
     func sendToOutput(_ json: String) {
-        outputWebView?.evaluateJavaScript("window.__lichtwerkReceive?.(\(json)); 0", completionHandler: nil)
+        for webView in outputWebViews.allObjects {
+            webView.evaluateJavaScript("window.__lichtwerkReceive?.(\(json)); 0", completionHandler: nil)
+        }
+    }
+
+    /// Opens /output in its own window, or brings the existing one to the front.
+    func openOutputWindow() {
+        let existing = UIApplication.shared.openSessions.first {
+            $0.configuration.name == ExternalDisplay.outputWindowConfiguration
+        }
+        let activity = existing == nil ? NSUserActivity(activityType: ExternalDisplay.outputWindowActivity) : nil
+        UIApplication.shared.requestSceneSessionActivation(existing, userActivity: activity, options: nil) { error in
+            NSLog("[Lichtwerk] could not open the output window: %@", error.localizedDescription)
+        }
     }
 
     /// Output -> editor.
@@ -35,8 +52,8 @@ final class ExternalDisplay {
     }
 }
 
-/// Scene for the role `windowExternalDisplayNonInteractive` (see AppDelegate).
-final class ExternalDisplaySceneDelegate: UIResponder, UIWindowSceneDelegate {
+/// Scene for the role `windowExternalDisplayNonInteractive` and for the output window (see AppDelegate).
+final class OutputSceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
@@ -46,16 +63,29 @@ final class ExternalDisplaySceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.rootViewController = OutputViewController()
         window.isHidden = false
         self.window = window
+        // the output window on the iPad (Stage Manager); a connected display has no orientation to lock
+        if session.role == .windowApplication { windowScene.lockLandscape() }
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
+        if let webView = window?.rootViewController?.view as? WKWebView {
+            ExternalDisplay.shared.detach(webView)
+        }
         window = nil
-        ExternalDisplay.shared.detach()
+    }
+
+    /// Lets a restored output window come back as an output window, not as a second editor.
+    func stateRestorationActivity(for scene: UIScene) -> NSUserActivity? {
+        scene.session.role == .windowApplication ? NSUserActivity(activityType: ExternalDisplay.outputWindowActivity) : nil
     }
 }
 
 /// A plain web view (no Capacitor bridge) that serves the bundled web app like the main one does.
 final class OutputViewController: UIViewController, WKScriptMessageHandler {
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
+        LandscapeOnly.orientations
+    }
+
     override func loadView() {
         let configuration = InstanceConfiguration(with: InstanceDescriptor(), isDebug: CapacitorBridge.isDevEnvironment)
         let assetHandler = WebViewAssetHandler(router: CapacitorRouter())
@@ -111,6 +141,7 @@ public class ExternalDisplayPlugin: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "send", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "isConnected", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "openWindow", returnType: CAPPluginReturnPromise),
     ]
 
     override public func load() {
@@ -131,6 +162,13 @@ public class ExternalDisplayPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func isConnected(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             call.resolve(["connected": ExternalDisplay.shared.isConnected])
+        }
+    }
+
+    @objc func openWindow(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            ExternalDisplay.shared.openOutputWindow()
+            call.resolve()
         }
     }
 }
