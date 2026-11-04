@@ -4,10 +4,11 @@ import { create } from "zustand";
 import { GROUP_COLORS } from "./palette";
 import { t } from "./i18n";
 import { layerOrder, uid } from "./geometry";
-import { emptyProgram, emptyTimeline, upsertTimeline, nextScriptY, type Clip } from "./timeline";
+import { emptyProgram } from "./timeline";
+import { migrateProject, type StoredProject } from "./migrate";
 
 export { layerOrder };
-import type { Aspect, EffectAssignment, Group, Mode, Project, Stroke } from "./types";
+import type { Aspect, Group, Mode, Project, Stroke } from "./types";
 
 const STORAGE_KEY = "lichtwerk.project.v1";
 
@@ -28,44 +29,15 @@ export function createDefaultProject(): Project {
     aspect: "16:9",
     groups,
     strokes: [],
-    groupEffects: {},
-    strokeEffects: {},
     program: null,
   };
 }
 
-/**
- * Older projects stored effects per group / stroke. Turn them into clips of a
- * start timeline so the timeline and the blocks are the only place for effects.
- */
-function migrateStaticEffects(p: Project): Project {
-  const groupFx = Object.entries(p.groupEffects ?? {});
-  const strokeFx = Object.entries(p.strokeEffects ?? {});
-  let program = p.program ?? emptyProgram();
-  if (groupFx.length || strokeFx.length) {
-    const tl = emptyTimeline({ k: "start" }, p.program ? nextScriptY(p.program) : 40);
-    const clips: Clip[] = [];
-    for (const [groupId, e] of groupFx) {
-      clips.push({ id: "", groupId, nr: null, effect: e.effect, color: e.color, sequence: e.sequence, start: 0, duration: tl.duration });
-    }
-    for (const [strokeId, e] of strokeFx) {
-      const s = p.strokes.find((x) => x.id === strokeId);
-      if (!s) continue;
-      const nr = p.strokes.filter((x) => x.groupId === s.groupId).indexOf(s) + 1;
-      clips.push({ id: "", groupId: s.groupId, nr, effect: e.effect, color: e.color, sequence: "together", start: 0, duration: tl.duration });
-    }
-    tl.clips = clips;
-    // replace the empty default start timeline if that is all there is
-    program = p.program ? upsertTimeline(program, tl) : upsertTimeline({ blocks: { languageVersion: 0, blocks: [] } }, tl);
-  }
-  return { ...p, program, groupEffects: {}, strokeEffects: {} };
-}
-
-export function loadStoredProject(): Project | null {
+export function loadStoredProject(): StoredProject | null {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
-    const p = JSON.parse(raw) as Project;
+    const p = JSON.parse(raw) as StoredProject;
     if (p && p.version === 1 && Array.isArray(p.strokes) && Array.isArray(p.groups)) return p;
   } catch {
     /* ignore broken / unavailable storage */
@@ -113,7 +85,8 @@ interface ProjectState {
   history: Stroke[][];
 
   hydrate: () => void;
-  replaceProject: (p: Project) => void;
+  /** load an imported project (old formats are migrated) */
+  replaceProject: (p: StoredProject) => void;
   newProject: () => void;
   setMode: (m: Mode) => void;
   setTool: (tool: "pen" | "eraser") => void;
@@ -132,8 +105,6 @@ interface ProjectState {
   moveStrokeToGroup: (strokeId: string, groupId: string) => void;
 
   selectStroke: (id: string | null) => void;
-  setGroupEffect: (groupId: string, e: EffectAssignment) => void;
-  setStrokeEffect: (strokeId: string, e: EffectAssignment | null) => void;
   setProgram: (program: unknown) => void;
 }
 
@@ -148,7 +119,7 @@ export const useProject = create<ProjectState>((set, get) => {
   };
 
   return {
-    project: { version: 1, aspect: "16:9", groups: [], strokes: [], groupEffects: {}, strokeEffects: {}, program: null },
+    project: { version: 1, aspect: "16:9", groups: [], strokes: [], program: null },
     hydrated: false,
     mode: "draw",
     activeGroupId: null,
@@ -157,10 +128,12 @@ export const useProject = create<ProjectState>((set, get) => {
     history: [],
 
     hydrate: () => {
-      const project = migrateStaticEffects(loadStoredProject() ?? createDefaultProject());
+      const stored = loadStoredProject();
+      const project = stored ? migrateProject(stored) : { ...createDefaultProject(), program: emptyProgram() };
       set({ project, hydrated: true, activeGroupId: project.groups[1]?.id ?? project.groups[0]?.id ?? null });
     },
-    replaceProject: (p) => {
+    replaceProject: (imported) => {
+      const p = migrateProject(imported);
       set({ project: p, history: [], selectedStrokeId: null, activeGroupId: p.groups[0]?.id ?? null });
       persist(p);
     },
@@ -182,12 +155,7 @@ export const useProject = create<ProjectState>((set, get) => {
         return { ...p, strokes: [...p.strokes, { ...s, id: uid("s"), groupId, z }] };
       }, true);
     },
-    removeStroke: (id) =>
-      update((p) => {
-        const strokeEffects = { ...p.strokeEffects };
-        delete strokeEffects[id];
-        return { ...p, strokes: p.strokes.filter((s) => s.id !== id), strokeEffects };
-      }, true),
+    removeStroke: (id) => update((p) => ({ ...p, strokes: p.strokes.filter((s) => s.id !== id) }), true),
     moveLayer: (id, move) =>
       update((p) => {
         const order = layerOrder(p.strokes).map((s) => s.id);
@@ -200,7 +168,7 @@ export const useProject = create<ProjectState>((set, get) => {
         const z = new Map(order.map((sid, k) => [sid, k]));
         return { ...p, strokes: p.strokes.map((s) => ({ ...s, z: z.get(s.id) })) };
       }, true),
-    clearStrokes: () => update((p) => ({ ...p, strokes: [], strokeEffects: {} }), true),
+    clearStrokes: () => update((p) => ({ ...p, strokes: [] }), true),
     undo: () => {
       const history = get().history;
       if (!history.length) return;
@@ -221,11 +189,7 @@ export const useProject = create<ProjectState>((set, get) => {
     deleteGroup: (id) => {
       const p = get().project;
       if (p.strokes.some((s) => s.groupId === id) || p.groups.length <= 1) return;
-      update((proj) => {
-        const groupEffects = { ...proj.groupEffects };
-        delete groupEffects[id];
-        return { ...proj, groups: proj.groups.filter((g) => g.id !== id), groupEffects };
-      });
+      update((proj) => ({ ...proj, groups: proj.groups.filter((g) => g.id !== id) }));
       if (get().activeGroupId === id) set({ activeGroupId: get().project.groups[0]?.id ?? null });
     },
     moveStrokeToGroup: (strokeId, groupId) =>
@@ -242,14 +206,6 @@ export const useProject = create<ProjectState>((set, get) => {
       ),
 
     selectStroke: (id) => set({ selectedStrokeId: id }),
-    setGroupEffect: (groupId, e) => update((p) => ({ ...p, groupEffects: { ...p.groupEffects, [groupId]: e } })),
-    setStrokeEffect: (strokeId, e) =>
-      update((p) => {
-        const strokeEffects = { ...p.strokeEffects };
-        if (e) strokeEffects[strokeId] = e;
-        else delete strokeEffects[strokeId];
-        return { ...p, strokeEffects };
-      }),
     setProgram: (program) => update((p) => ({ ...p, program })),
   };
 });

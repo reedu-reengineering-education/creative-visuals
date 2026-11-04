@@ -2,8 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useProject } from "@/lib/store";
-import { useLang, useT, t as tr } from "@/lib/i18n";
-import { allChannels, channelLabel } from "@/lib/sensors";
+import { useLang, useT } from "@/lib/i18n";
 import { interpreter, seek, setPaused, startProgram, useRuntime } from "@/lib/runtime";
 import {
   MIN_CLIP,
@@ -18,78 +17,9 @@ import {
   type Timeline,
 } from "@/lib/timeline";
 import { clipKey, deleteScript, saveTimeline, useTimelineUi, viewId } from "@/lib/timelineUi";
-import type { Trigger } from "@/lib/program";
-import { EFFECT_PREVIEW, IconBlocks, IconPlus, IconTrash } from "./Icons";
+import { EFFECT_PREVIEW, IconPlus, IconTrash } from "./Icons";
 
 /* ---------------------------------------------------------------- helpers */
-
-const KEYS = ["space", "left", "right", "up", "down", ..."abcdefghijklmnopqrstuvwxyz0123456789"];
-
-function keyLabel(k: string): string {
-  if (k === "space") return tr("key.space");
-  if (k === "left") return tr("key.left");
-  if (k === "right") return tr("key.right");
-  if (k === "up") return tr("key.up");
-  if (k === "down") return tr("key.down");
-  return k.toUpperCase();
-}
-
-export function triggerLabel(tg: Trigger): string {
-  switch (tg.k) {
-    case "start":
-      return tr("tl.start");
-    case "tap":
-      return tr("tl.tap");
-    case "key":
-      return tr("tl.key", { key: keyLabel(tg.key) });
-    case "sensor": {
-      const c = allChannels().find((x) => x.id === tg.cond.sensor);
-      return `${c ? channelLabel(c) : tg.cond.sensor} ${tg.cond.op} ${tg.cond.value}`;
-    }
-  }
-}
-
-function TriggerIcon({ tg }: { tg: Trigger }) {
-  const p = {
-    viewBox: "0 0 24 24",
-    width: 16,
-    height: 16,
-    fill: "none",
-    stroke: "currentColor",
-    strokeWidth: 2,
-    strokeLinecap: "round" as const,
-    strokeLinejoin: "round" as const,
-    "aria-hidden": true,
-  };
-  switch (tg.k) {
-    case "start":
-      return (
-        <svg {...p}>
-          <path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none" />
-        </svg>
-      );
-    case "key":
-      return (
-        <svg {...p}>
-          <rect x="3" y="6" width="18" height="12" rx="2" />
-          <path d="M7 14h10M7 10h.01M11 10h.01M15 10h.01" />
-        </svg>
-      );
-    case "tap":
-      return (
-        <svg {...p}>
-          <path d="M9 11V5a2 2 0 0 1 4 0v6M13 10a2 2 0 0 1 4 0v3a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-2.5-3.5a1.6 1.6 0 0 1 2.5-2L9 14" />
-        </svg>
-      );
-    case "sensor":
-      return (
-        <svg {...p}>
-          <path d="M7 8.5a7 7 0 0 0 0 7M17 8.5a7 7 0 0 1 0 7" />
-          <circle cx="12" cy="12" r="1.8" />
-        </svg>
-      );
-  }
-}
 
 const RAINBOW = "linear-gradient(90deg,#FF6B5E,#FFE45C,#7CF29A,#5CE6E0,#5C9DFF,#B07CFF)";
 
@@ -116,18 +46,24 @@ interface Drag {
   moved: boolean;
 }
 
-export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void }) {
+/**
+ * The start show as a timeline. Only "Wenn Start" scripts are shown here:
+ * everything that reacts (buttons, keys, sensors, variables) is programmed
+ * in the code mode.
+ */
+export default function TimelineDock() {
   const t = useT();
   const lang = useLang((s) => s.lang);
   const program = useProject((s) => s.project.program);
   const groups = useProject((s) => s.project.groups);
   const strokes = useProject((s) => s.project.strokes);
-  const selectedStrokeId = useProject((s) => s.selectedStrokeId);
-  const running = useRuntime((s) => s.running);
-  const paused = useRuntime((s) => s.paused);
   const ui = useTimelineUi();
+  const paused = useRuntime((s) => s.paused);
 
-  const views = useMemo(() => parseProgram(program), [program]);
+  const views = useMemo(
+    () => parseProgram(program).filter((v) => v.kind === "timeline" && v.timeline.trigger.k === "start"),
+    [program],
+  );
   const active: ScriptView | undefined = views.find((v) => viewId(v) === ui.activeId) ?? views[0];
   const tl = active?.kind === "timeline" ? active.timeline : null;
 
@@ -137,7 +73,6 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
   const timeRef = useRef<HTMLSpanElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [draft, setDraft] = useState<{ start: number; duration: number } | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   // keep the active tab valid
@@ -147,21 +82,11 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active && viewId(active)]);
 
-  // the effects mode always plays
+  // the effects mode plays right away; pausing is only for here (Show and Code never start paused)
   useEffect(() => {
     if (!useRuntime.getState().running) void startProgram();
+    return () => setPaused(false);
   }, []);
-
-  // tapping a shape on the wall selects its row
-  useEffect(() => {
-    if (!selectedStrokeId) return;
-    const s = strokes.find((x) => x.id === selectedStrokeId);
-    if (!s) return;
-    const count = strokes.filter((x) => x.groupId === s.groupId).length;
-    if (count > 1) useTimelineUi.getState().toggleExpanded(s.groupId, true);
-    useTimelineUi.getState().selectRow(s.groupId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStrokeId]);
 
   // track width
   useLayoutEffect(() => {
@@ -301,29 +226,14 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
     if (!tl) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const sec = Math.min(Math.max(0, (e.clientX - rect.left) / pps), tl.duration - 0.01);
-    if (tl.trigger.k === "start") seek(sec * 1000);
-    else {
-      if (!useRuntime.getState().running) void startProgram().then(() => interpreter.fire(tl.id, sec * 1000));
-      else interpreter.fire(tl.id, sec * 1000);
-    }
+    seek(sec * 1000);
   };
 
-  const addEvent = (k: Trigger["k"]) => {
-    const trigger: Trigger =
-      k === "key"
-        ? { k: "key", key: "space" }
-        : k === "tap"
-          ? { k: "tap" }
-          : k === "sensor"
-            ? { k: "sensor", cond: { sensor: "noise", op: ">", value: 70 } }
-            : { k: "start" };
-    const tl2 = emptyTimeline(trigger, nextScriptY(program));
+  const addShow = () => {
+    const tl2 = emptyTimeline({ k: "start" }, nextScriptY(program));
     update(tl2);
     ui.setActive(tl2.id);
-    setAddOpen(false);
   };
-
-  const setTrigger = (trigger: Trigger) => tl && update({ ...tl, trigger });
 
   /* -------------------------------------------------------------- render */
 
@@ -334,88 +244,71 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
     return out;
   }, [duration]);
 
-  const canDelete = active && (active.kind === "code" || active.timeline.trigger.k !== "start" || views.filter((v) => v.kind === "timeline" && v.timeline.trigger.k === "start").length > 1);
+  const canDelete = views.length > 1;
+  // with exactly one show (the normal case) the open timeline needs no header row
+  const showHead = ui.collapsed || views.length !== 1;
+  const toggle = (
+    <button
+      className={ui.collapsed ? "chip dock-toggle" : "round small"}
+      aria-label={ui.collapsed ? t("tl.expand") : t("tl.collapse")}
+      aria-expanded={!ui.collapsed}
+      title={ui.collapsed ? t("tl.expand") : t("tl.collapse")}
+      onClick={() => ui.setCollapsed(!ui.collapsed)}
+    >
+      {ui.collapsed && <span>{t("tl.open")}</span>}
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+        <path d={ui.collapsed ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} />
+      </svg>
+    </button>
+  );
 
   return (
     <section className={`dock bar${ui.collapsed ? " collapsed" : ""}`} aria-label={t("mode.effects")}>
-      <div className="dock-head">
-        <div className="tabs" role="tablist">
-          {views.map((v) => {
-            const id = viewId(v);
-            const on = active && viewId(active) === id;
-            const trig = v.kind === "timeline" ? v.timeline.trigger : v.trigger;
-            return (
-              <button key={id} role="tab" aria-selected={!!on} className={`tab${on ? " on" : ""}${v.kind === "code" ? " code" : ""}`} onClick={() => ui.setActive(id)}>
-                {v.kind === "code" ? <IconBlocks /> : <TriggerIcon tg={trig} />}
-                <span>{triggerLabel(trig)}</span>
-              </button>
-            );
-          })}
-          <div style={{ position: "relative" }}>
-            <button className="tab add" onClick={() => setAddOpen((o) => !o)} aria-expanded={addOpen}>
-              <IconPlus />
-              <span>{t("tl.addEvent")}</span>
-            </button>
-            {addOpen && (
-              <div className="menu">
-                <button onClick={() => addEvent("key")}>
-                  <TriggerIcon tg={{ k: "key", key: "space" }} /> {t("tl.event.key")}
+      {showHead && (
+        <div className="dock-head">
+          {/* collapsed: just a hint – effects are picked by tapping a shape */}
+          {ui.collapsed ? (
+            <p className="dock-hint">{t("fx.tapHint")}</p>
+          ) : (
+            <div className="tabs" role="tablist">
+              {/* tabs only for older programs with several shows; "Neue Show" only when there is none */}
+              {views.length > 1 &&
+                views.map((v, i) => {
+                  const id = viewId(v);
+                  const on = active && viewId(active) === id;
+                  return (
+                    <button key={id} role="tab" aria-selected={!!on} className={`tab${on ? " on" : ""}`} onClick={() => ui.setActive(id)}>
+                      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M7 4.5v15l12-7.5z" />
+                      </svg>
+                      <span>{`${t("tl.start")} ${i + 1}`}</span>
+                    </button>
+                  );
+                })}
+              {views.length === 0 && (
+                <button className="tab add" onClick={addShow}>
+                  <IconPlus />
+                  <span>{t("tl.addShow")}</span>
                 </button>
-                <button onClick={() => addEvent("tap")}>
-                  <TriggerIcon tg={{ k: "tap" }} /> {t("tl.event.tap")}
-                </button>
-                <button onClick={() => addEvent("sensor")}>
-                  <TriggerIcon tg={{ k: "sensor", cond: { sensor: "noise", op: ">", value: 70 } }} /> {t("tl.event.sensor")}
-                </button>
-                <button onClick={() => addEvent("start")}>
-                  <TriggerIcon tg={{ k: "start" }} /> {t("tl.start")}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-        <button
-          className="round small"
-          aria-label={ui.collapsed ? t("tl.expand") : t("tl.collapse")}
-          title={ui.collapsed ? t("tl.expand") : t("tl.collapse")}
-          onClick={() => ui.setCollapsed(!ui.collapsed)}
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-            <path d={ui.collapsed ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} />
-          </svg>
-        </button>
-      </div>
-
-      {!ui.collapsed && active?.kind === "code" && (
-        <div className="dock-code">
-          <p className="muted">{t("tl.codeOnly")}</p>
-          <div className="row">
-            <button className="primary" onClick={onOpenCode}>
-              <IconBlocks />
-              {t("tl.openCode")}
-            </button>
-            {canDelete && (
-              <button className={`ghost${confirmDelete ? " danger" : ""}`} onClick={() => (confirmDelete ? deleteScript(active.id) : setConfirmDelete(true))}>
-                {confirmDelete ? t("tl.deleteConfirm") : t("tl.delete")}
-              </button>
-            )}
-          </div>
+              )}
+            </div>
+          )}
+          {toggle}
         </div>
       )}
+
+      {!ui.collapsed && !tl && <p className="muted tl-hint">{t("tl.noShow")}</p>}
 
       {!ui.collapsed && tl && (
         <>
           <div className="dock-tools">
             <button
               className="round small"
-              aria-label={paused || !running ? t("tl.play") : t("tl.pause")}
-              title={paused || !running ? t("tl.play") : t("tl.pause")}
-              onClick={() => {
-                if (!running) void startProgram();
-                setPaused(running ? !paused : false);
-              }}
+              aria-label={paused ? t("tl.play") : t("tl.pause")}
+              title={paused ? t("tl.play") : t("tl.pause")}
+              onClick={() => setPaused(!paused)}
             >
-              {paused || !running ? (
+              {paused ? (
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
                   <path d="M7 4.5v15l12-7.5z" />
                 </svg>
@@ -426,64 +319,12 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
                 </svg>
               )}
             </button>
-            {tl.trigger.k === "start" ? (
-              <button className="round small" aria-label={t("tl.restart")} title={t("tl.restart")} onClick={() => seek(0)}>
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                  <path d="M6 5v14M18 6l-9 6 9 6z" />
-                </svg>
-              </button>
-            ) : (
-              <button
-                className="chip"
-                onClick={() => {
-                  if (!useRuntime.getState().running) void startProgram().then(() => interpreter.fire(tl.id));
-                  else interpreter.fire(tl.id);
-                }}
-              >
-                <TriggerIcon tg={tl.trigger} /> {t("tl.fire")}
-              </button>
-            )}
+            <button className="round small" aria-label={t("tl.restart")} title={t("tl.restart")} onClick={() => seek(0)}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <path d="M6 5v14M18 6l-9 6 9 6z" />
+              </svg>
+            </button>
             <span className="time" ref={timeRef} />
-
-            {tl.trigger.k === "key" && (
-              <label className="field">
-                <span>{t("tl.when")}</span>
-                <select value={tl.trigger.key} onChange={(e) => setTrigger({ k: "key", key: e.target.value })}>
-                  {KEYS.map((k) => (
-                    <option key={k} value={k}>
-                      {keyLabel(k)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {tl.trigger.k === "sensor" && (
-              <label className="field">
-                <span>{t("tl.when")}</span>
-                <select
-                  value={tl.trigger.cond.sensor}
-                  onChange={(e) => tl.trigger.k === "sensor" && setTrigger({ k: "sensor", cond: { ...tl.trigger.cond, sensor: e.target.value } })}
-                >
-                  {allChannels().map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {channelLabel(c)}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={tl.trigger.cond.op}
-                  onChange={(e) => tl.trigger.k === "sensor" && setTrigger({ k: "sensor", cond: { ...tl.trigger.cond, op: e.target.value === "<" ? "<" : ">" } })}
-                >
-                  <option value=">">&gt;</option>
-                  <option value="<">&lt;</option>
-                </select>
-                <input
-                  type="number"
-                  value={tl.trigger.cond.value}
-                  onChange={(e) => tl.trigger.k === "sensor" && setTrigger({ k: "sensor", cond: { ...tl.trigger.cond, value: Number(e.target.value) || 0 } })}
-                />
-              </label>
-            )}
 
             <div className="spacer" />
             <label className="field">
@@ -496,10 +337,6 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
                 +
               </button>
             </label>
-            <label className="toggle">
-              <input type="checkbox" checked={tl.loop} onChange={(e) => update({ ...tl, loop: e.target.checked })} />
-              {t("tl.loop")}
-            </label>
             {canDelete && (
               <button
                 className={`round small${confirmDelete ? " danger-bg" : ""}`}
@@ -510,6 +347,7 @@ export default function TimelineDock({ onOpenCode }: { onOpenCode: () => void })
                 <IconTrash />
               </button>
             )}
+            {!showHead && toggle}
           </div>
 
           <div className="tl">

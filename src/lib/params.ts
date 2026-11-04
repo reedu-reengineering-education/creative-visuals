@@ -25,6 +25,13 @@ export const SIZES: { value: number; label: string }[] = [
 
 export const BRIGHTNESS: number[] = [0.25, 0.5, 0.75, 1];
 
+export const AMOUNTS: { value: number; key: TKey }[] = [
+  { value: 0.2, key: "param.amount.few" },
+  { value: 0.5, key: "param.amount.normal" },
+  { value: 0.75, key: "param.amount.many" },
+  { value: 1, key: "param.amount.loads" },
+];
+
 export const DIRECTIONS: { value: Direction; key: TKey; arrow: string }[] = [
   { value: "right", key: "param.dir.right", arrow: "→" },
   { value: "left", key: "param.dir.left", arrow: "←" },
@@ -34,7 +41,7 @@ export const DIRECTIONS: { value: Direction; key: TKey; arrow: string }[] = [
   { value: "in", key: "param.dir.in", arrow: "→←" },
 ];
 
-/** Number sources that work without a sensor. */
+/** What the "number" effect can show without code. */
 export const TIMER = "timer";
 export const CLOCK = "clock";
 
@@ -68,7 +75,12 @@ export function parseParams(v: unknown): EffectParams {
   if (typeof r.dir === "string" && DIRS.has(r.dir)) p.dir = r.dir as Direction;
   if (typeof r.color2 === "string" && r.color2) p.color2 = r.color2 as ColorSpec;
   if (typeof r.text === "string" && r.text) p.text = r.text.slice(0, 120);
-  if (typeof r.source === "string" && r.source) p.source = r.source;
+  if (r.source === TIMER || r.source === CLOCK) p.source = r.source;
+  if (typeof r.value === "string") p.value = r.value.slice(0, 120);
+  const amount = finite(r.amount);
+  if (amount !== undefined) p.amount = Math.min(1, Math.max(0, amount));
+  const level = finite(r.level);
+  if (level !== undefined) p.level = Math.min(1, Math.max(0, level));
   return p;
 }
 
@@ -83,6 +95,9 @@ export function cleanParams(p: EffectParams | undefined): EffectParams {
   if (p.color2) out.color2 = p.color2;
   if (p.text) out.text = p.text;
   if (p.source) out.source = p.source;
+  if (p.value !== undefined) out.value = p.value;
+  if (p.amount !== undefined && p.amount !== 0.5) out.amount = p.amount;
+  if (p.level !== undefined) out.level = p.level;
   return out;
 }
 
@@ -100,6 +115,3 @@ export function sameParams(a: EffectParams | undefined, b: EffectParams | undefi
   return encodeParams(a) === encodeParams(b);
 }
 
-export function hasParams(p: EffectParams | undefined): boolean {
-  return encodeParams(p) !== "";
-}

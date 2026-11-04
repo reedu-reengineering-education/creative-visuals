@@ -8,18 +8,18 @@ import { interpreter, restartKeepingTime, startProgram, stopProgram, useRuntime 
 import { useTimelineUi } from "@/lib/timelineUi";
 import TimelineDock from "./TimelineDock";
 import { useSensors } from "@/lib/sensors";
-import { normaliseKey } from "@/lib/program";
+import { BUTTONS, normaliseKey } from "@/lib/program";
 import { openChannel, type SyncMessage } from "@/lib/sync";
 import type { Mode } from "@/lib/types";
 import Stage from "./Stage";
 import { Palette, ToolRail } from "./DrawTools";
-import EffectsPanel from "./EffectsPanel";
+import ClipInspector from "./ClipInspector";
+import ButtonPad from "./ButtonPad";
 import ShapeMenu from "./ShapeMenu";
 import SensorPanel from "./SensorPanel";
 import MenuDialog, { HelpDialog } from "./MenuDialog";
 import {
   IconBlocks,
-  IconCode,
   IconHelp,
   IconMenu,
   IconPen,
@@ -39,6 +39,13 @@ const MODES: { mode: Mode; key: "mode.draw" | "mode.effects" | "mode.code" | "mo
   { mode: "code", key: "mode.code", Icon: IconBlocks },
   { mode: "show", key: "mode.show", Icon: IconPlay },
 ];
+
+/** A key press for the program: key blocks, and keys 1–4 also press the on-screen buttons. */
+function pressKey(key: string) {
+  if (!useRuntime.getState().running) return;
+  interpreter.key(key);
+  if ((BUTTONS as readonly string[]).includes(key)) interpreter.button(key);
+}
 
 /** Runs the program clock, keyboard input and the sync with an output window. */
 function useRuntimeDriver() {
@@ -62,20 +69,21 @@ function useRuntimeDriver() {
           break;
         case "pong":
           lastPong = Date.now();
-          if (!useRuntime.getState().outputConnected) useRuntime.getState().setOutputConnected(true);
+          // the output was there before the editor (e.g. the iOS app started with a projector attached)
+          if (!useRuntime.getState().outputConnected) {
+            useRuntime.getState().setOutputConnected(true);
+            sendAll();
+          }
           break;
         case "key":
-          if (useRuntime.getState().running) interpreter.key(m.key);
-          break;
-        case "tap":
-          if (useRuntime.getState().running) interpreter.tap();
+          pressKey(m.key);
           break;
       }
     });
     const sendAll = () => {
       ch.post({ type: "project", project: useProject.getState().project });
       const rt = useRuntime.getState();
-      ch.post({ type: "runtime", running: rt.running, overrides: rt.overrides });
+      ch.post({ type: "runtime", running: rt.running, overrides: rt.overrides, pausedAt: rt.pausedAt });
       ch.post({ type: "sensors", values: useSensors.getState().values });
     };
     let restartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -88,8 +96,8 @@ function useRuntimeDriver() {
       }
     });
     const unsubRuntime = useRuntime.subscribe((s, prev) => {
-      if (s.overrides !== prev.overrides || s.running !== prev.running) {
-        ch.post({ type: "runtime", running: s.running, overrides: s.overrides });
+      if (s.overrides !== prev.overrides || s.running !== prev.running || s.pausedAt !== prev.pausedAt) {
+        ch.post({ type: "runtime", running: s.running, overrides: s.overrides, pausedAt: s.pausedAt });
       }
     });
     let sensorTimer: ReturnType<typeof setTimeout> | null = null;
@@ -114,7 +122,7 @@ function useRuntimeDriver() {
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
       if (target?.closest?.(".blocklyWidgetDiv, .blocklyDropDownDiv")) return;
       const key = normaliseKey(e.key);
-      if (key && useRuntime.getState().running) interpreter.key(key);
+      if (key) pressKey(key);
     };
     window.addEventListener("keydown", onKey);
 
@@ -141,7 +149,6 @@ export default function Editor() {
   const [sensorsOpen, setSensorsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [showCode, setShowCode] = useState(false);
   const [shapeMenu, setShapeMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const running = useRuntime((s) => s.running);
   const [hintVisible, setHintVisible] = useState(true);
@@ -192,9 +199,9 @@ export default function Editor() {
         <Stage
           view="light"
           interaction="tap"
-          onTap={() => useRuntime.getState().running && interpreter.tap()}
           onTwoFingers={() => setMode(prevMode.current === "show" ? "draw" : prevMode.current)}
         />
+        <ButtonPad overlay />
         <p className="show-hint" style={{ opacity: hintVisible ? 1 : 0 }}>
           {t("show.exit")}
         </p>
@@ -203,7 +210,7 @@ export default function Editor() {
   }
 
   return (
-    <div className={`app${mode === "code" ? " code" : ""}${mode === "effects" ? ` effects${dockCollapsed ? " dock-collapsed" : ""}` : ""}`}>
+    <div className={`app dotted${mode === "code" ? " code" : ""}${mode === "effects" ? ` effects${dockCollapsed ? " dock-collapsed" : ""}` : ""}`}>
       {mode !== "code" && (
         <Stage
           view={mode === "draw" ? "draw" : "effects"}
@@ -214,10 +221,13 @@ export default function Editor() {
         />
       )}
 
-      <div className="status">
-        <span className={`dot${outputConnected ? "" : " off"}`} />
-        {outputConnected ? t("status.output") : t("status.local")}
-      </div>
+      {/* only worth a word when an output window (or the projector in the iOS app) is connected */}
+      {outputConnected && (
+        <div className="status">
+          <span className="dot" />
+          {t("status.output")}
+        </div>
+      )}
 
       <nav className="modebar bar" aria-label="Modus">
         {MODES.map(({ mode: m, key, Icon }) => (
@@ -231,9 +241,6 @@ export default function Editor() {
       <div className="topright">
         {mode === "code" && (
           <>
-            <button className="round" aria-label={t("code.showCode")} title={t("code.showCode")} onClick={() => setShowCode(true)}>
-              <IconCode />
-            </button>
             {running ? (
               <button className="primary stop" onClick={stopProgram}>
                 <IconStopFilled />
@@ -270,12 +277,12 @@ export default function Editor() {
 
       {mode === "effects" && (
         <>
-          <EffectsPanel />
-          <TimelineDock onOpenCode={() => changeMode("code")} />
+          <ClipInspector onOpenTimeline={() => useTimelineUi.getState().setCollapsed(false)} />
+          <TimelineDock />
         </>
       )}
 
-      {mode === "code" && <CodeMode showCode={showCode} onCloseCode={() => setShowCode(false)} />}
+      {mode === "code" && <CodeMode />}
 
       {sensorsOpen && <SensorPanel onClose={() => setSensorsOpen(false)} />}
       {menuOpen && <MenuDialog onClose={() => setMenuOpen(false)} />}

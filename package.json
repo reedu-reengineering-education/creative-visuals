@@ -7,9 +7,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:ios": "LICHTWERK_EXPORT=1 next build && cap sync ios",
+    "ios": "cap open ios"
   },
   "dependencies": {
+    "@capacitor-community/bluetooth-le": "^8.3.0",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/ios": "^8.6.0",
     "blockly": "^13.4.0",
     "next": "^16.4.3",
     "react": "^19.3.1",
@@ -17,6 +22,7 @@
     "zustand": "^5.0.16"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.6.0",
     "@types/node": "^22",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19",

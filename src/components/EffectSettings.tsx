@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useT } from "@/lib/i18n";
-import { effectDef, LIGHT_COLORS } from "@/lib/palette";
-import { BRIGHTNESS, CLOCK, DIRECTIONS, SIZES, SPEEDS, TIMER } from "@/lib/params";
-import { allChannels, channelLabel } from "@/lib/sensors";
+import { effectDef, PICK_COLORS } from "@/lib/palette";
+import { AMOUNTS, BRIGHTNESS, CLOCK, DIRECTIONS, SIZES, SPEEDS, TIMER } from "@/lib/params";
 import type { ColorSpec, EffectParams, EffectType } from "@/lib/types";
 
 const RAINBOW = "conic-gradient(#FF6B5E, #FFE45C, #7CF29A, #5CE6E0, #5C9DFF, #B07CFF, #FF6B5E)";
@@ -18,19 +17,25 @@ export default function EffectSettings({
   effect,
   params,
   onChange,
+  hide = [],
 }: {
   effect: EffectType;
   params: EffectParams;
   onChange: (p: EffectParams) => void;
+  /** settings the block brings itself (e.g. the text of "Zeige …"); also hides the hint */
+  hide?: (keyof EffectParams)[];
 }) {
   const t = useT();
   const def = effectDef(effect);
-  if (!def || !def.uses.length) return null;
-  const uses = new Set(def.uses);
+  const uses = new Set(def?.uses.filter((u) => !hide.includes(u)));
+  const hint = hide.length ? undefined : def?.hint;
+  if (!def || (!uses.size && !hint)) return null;
   const set = (p: Partial<EffectParams>) => onChange({ ...params, ...p });
 
   return (
     <div className="fx-settings">
+      {hint && <p className="fx-hint">{t(hint)}</p>}
+
       {uses.has("text") && (
         <div className="section">
           <p className="lbl">{t("param.text")}</p>
@@ -39,23 +44,14 @@ export default function EffectSettings({
       )}
 
       {uses.has("source") && (
-        <div className="section">
-          <p className="lbl">{t("param.source")}</p>
-          <div className="fx-sources">
-            {[
-              { id: TIMER, label: `⏱ ${t("param.source.timer")}` },
-              { id: CLOCK, label: `🕒 ${t("param.source.clock")}` },
-              ...allChannels().map((c) => ({ id: c.id, label: channelLabel(c) })),
-            ].map((s) => {
-              const on = (params.source ?? TIMER) === s.id;
-              return (
-                <button key={s.id} className={`chip${on ? " on" : ""}`} aria-pressed={on} onClick={() => set({ source: s.id })}>
-                  {s.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <Row label={t("param.source")}>
+          <Opt on={params.source !== CLOCK} onClick={() => set({ source: TIMER })}>
+            ⏱ {t("param.source.timer")}
+          </Opt>
+          <Opt on={params.source === CLOCK} onClick={() => set({ source: CLOCK })}>
+            🕒 {t("param.source.clock")}
+          </Opt>
+        </Row>
       )}
 
       {uses.has("speed") && (
@@ -74,6 +70,16 @@ export default function EffectSettings({
           {SIZES.map((s) => (
             <Opt key={s.value} on={(params.size ?? 1) === s.value} onClick={() => set({ size: s.value })}>
               {s.label}
+            </Opt>
+          ))}
+        </Row>
+      )}
+
+      {uses.has("amount") && (
+        <Row label={t("param.amount")}>
+          {AMOUNTS.map((a) => (
+            <Opt key={a.value} on={(params.amount ?? 0.5) === a.value} onClick={() => set({ amount: a.value })}>
+              {t(a.key)}
             </Opt>
           ))}
         </Row>
@@ -115,11 +121,11 @@ export default function EffectSettings({
               aria-pressed={!params.color2}
               onClick={() => set({ color2: undefined })}
             />
-            {[...LIGHT_COLORS.map((c) => ({ value: c.value as ColorSpec, key: c.key, bg: c.value })), { value: "rainbow" as ColorSpec, key: "color.rainbow" as const, bg: RAINBOW }].map(
+            {[...PICK_COLORS.map((c) => ({ value: c.value as ColorSpec, key: c.key, bg: c.value })), { value: "rainbow" as ColorSpec, key: "color.rainbow" as const, bg: RAINBOW }].map(
               (c) => (
                 <button
                   key={c.value}
-                  className={`sw-color${params.color2 === c.value ? " on" : ""}`}
+                  className={`sw-color${c.value === "#000000" ? " sw-black" : ""}${params.color2 === c.value ? " on" : ""}`}
                   style={{ background: c.bg }}
                   aria-label={t(c.key)}
                   title={t(c.key)}

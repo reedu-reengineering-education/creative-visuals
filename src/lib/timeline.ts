@@ -203,10 +203,12 @@ function hatFor(trigger: Trigger): BlockJson {
       return { type: "lw_on_start" };
     case "key":
       return { type: "lw_on_key", fields: { KEY: trigger.key } };
-    case "tap":
-      return { type: "lw_on_tap" };
-    case "sensor":
-      return { type: "lw_on_sensor", fields: { SENSOR: trigger.cond.sensor, OP: trigger.cond.op, VALUE: trigger.cond.value } };
+    case "button":
+      return { type: "lw_on_button", fields: { BUTTON: trigger.button } };
+    case "when":
+    case "while":
+      // never regenerated: the effects mode only edits "Wenn Start" timelines
+      return { type: trigger.k === "when" ? "lw_when" : "lw_while" };
   }
 }
 

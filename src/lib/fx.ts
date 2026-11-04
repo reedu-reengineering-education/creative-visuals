@@ -1,6 +1,6 @@
 /**
- * The more creative effects: squiggly lines, drawing on, radial fill, depth,
- * neon, pulse, stripes, confetti and everything added later (psychedelic,
+ * The more creative effects: squiggly lines, drawing on, radial fill,
+ * neon, echo, stripes, confetti and everything added later (psychedelic,
  * technical, fun and text effects). All work in canvas pixels.
  */
 import { hash01, LIGHT_COLORS, parseColor, rgbCss, shiftHue } from "./palette";
@@ -137,12 +137,23 @@ export interface FxArgs {
   /** the size setting itself, for things measured by the shape (text) */
   size: number;
   seed: number;
+  /** id of the shape (for effects that remember something between frames) */
+  id: string;
   /** second colour, or null if the kids didn't pick one */
   color2: string | null;
   dir: Direction | undefined;
   /** what text and number effects show */
   text: string;
+  /** how many particles, 0..1 (0.5 = normal) */
+  amount: number;
+  /** data effects: fill level 0..1 */
+  level: number;
+  /** data effects: recent values scaled to 0..1, oldest first */
+  series: number[];
 }
+
+/** Particle count for an amount setting (0.5 = the effect's normal count). */
+const many = (n: number, amount: number) => Math.round(n * amount * 2);
 
 /** Squiggly, slightly "boiling" hand-drawn line. */
 export function wobble({ ctx, pts, closed, color, t, lw, seed }: FxArgs) {
@@ -184,11 +195,15 @@ export function drawOn({ ctx, pts, closed, color, t, lw }: FxArgs) {
   }
 }
 
-/** A circle grows from the middle and fills the shape; then soft rings keep moving. */
+/** Seconds for one "grow and shrink" of the circle. */
+const RADIAL_PERIOD = 2.4;
+
+/** A filled circle in the middle keeps growing until it fills the shape and shrinking again. */
 export function radial({ ctx, pts, closed, color, t, lw }: FxArgs) {
+  // 0 → 1 → 0, smooth at both ends (starts small)
+  const e = 0.5 - 0.5 * Math.cos((t / RADIAL_PERIOD) * Math.PI * 2);
   if (!closed) {
-    // lines grow from their middle to both ends
-    const e = easeOut(t / 1.2);
+    // lines grow from their middle to both ends and back
     const part = subPath(pts, false, 0.5 - e / 2, 0.5 + e / 2);
     if (part.length < 2) return;
     ctx.shadowColor = color;
@@ -200,70 +215,23 @@ export function radial({ ctx, pts, closed, color, t, lw }: FxArgs) {
   }
   const c = centroid(pts, true);
   const R = Math.max(...pts.map((p) => dist(p, c))) * 1.02;
-  const e = easeOut(t / 1.4);
+  const r = Math.max(lw, R * (0.06 + 0.94 * e));
   ctx.save();
   trace(ctx, pts, true);
   ctx.clip();
   ctx.globalAlpha = 0.9;
   ctx.beginPath();
-  ctx.arc(c.x, c.y, R * e, 0, Math.PI * 2);
+  ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
   ctx.fill();
-  if (e < 1) {
-    ctx.globalAlpha = 0.8;
-    ctx.strokeStyle = "#FFFFFF";
-    ctx.lineWidth = lw * 1.5;
-    ctx.stroke();
-  } else {
-    // calm rings travelling outwards
-    ctx.strokeStyle = "#FFFFFF";
-    ctx.lineWidth = lw;
-    for (let k = 0; k < 3; k++) {
-      const f = (t * 0.45 + k / 3) % 1;
-      ctx.globalAlpha = 0.35 * (1 - f);
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, R * f, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  }
+  // bright edge so the circle reads as a circle, also on a light colour
+  ctx.globalAlpha = 0.85;
+  ctx.strokeStyle = "#FFFFFF";
+  ctx.lineWidth = lw * 1.5;
+  ctx.stroke();
   ctx.restore();
   ctx.globalAlpha = 1;
   ctx.lineWidth = lw;
   trace(ctx, pts, true);
-  ctx.stroke();
-}
-
-/** Depth: copies of the shape fly into it like a tunnel (lines: a 3D extrusion). */
-export function depth({ ctx, pts, closed, color, t, lw, dir }: FxArgs) {
-  const n = 6;
-  const phase = dir === "out" ? 1 - ((t * 0.5) % 1) : (t * 0.5) % 1;
-  ctx.shadowColor = color;
-  ctx.shadowBlur = lw * 3;
-  if (closed) {
-    const c = centroid(pts, true);
-    for (let k = n - 1; k >= 0; k--) {
-      const f = (k + phase) / n;
-      ctx.globalAlpha = Math.pow(1 - f, 1.4);
-      ctx.lineWidth = lw * (0.4 + 1.1 * (1 - f));
-      trace(ctx, scaleAround(pts, c, 1 - f * 0.92), true);
-      ctx.stroke();
-    }
-  } else {
-    for (let k = n - 1; k >= 0; k--) {
-      const f = (k + phase) / n;
-      const off = { x: f * lw * 9, y: f * lw * 9 };
-      ctx.globalAlpha = Math.pow(1 - f, 1.4);
-      ctx.lineWidth = lw * (0.5 + (1 - f));
-      trace(
-        ctx,
-        pts.map((p) => ({ x: p.x + off.x, y: p.y + off.y })),
-        false,
-      );
-      ctx.stroke();
-    }
-  }
-  ctx.globalAlpha = 1;
-  ctx.lineWidth = lw * 1.4;
-  trace(ctx, pts, closed);
   ctx.stroke();
 }
 
@@ -362,7 +330,7 @@ export function stripes({ ctx, pts, closed, color, color2, t, lw, dir }: FxArgs)
 }
 
 /** Colourful confetti raining inside the shape (lines: falling from the line). */
-export function confetti({ ctx, pts, closed, color, color2, t, lw, seed }: FxArgs) {
+export function confetti({ ctx, pts, closed, color, color2, t, lw, seed, amount }: FxArgs) {
   const xs = pts.map((p) => p.x);
   const ys = pts.map((p) => p.y);
   const minX = Math.min(...xs);
@@ -372,7 +340,7 @@ export function confetti({ ctx, pts, closed, color, color2, t, lw, seed }: FxArg
   const bw = Math.max(1, maxX - minX);
   const bh = Math.max(1, maxY - minY);
   const colors = color2 ? [color, color2] : [color, ...LIGHT_COLORS.map((c) => c.value)];
-  const n = Math.round(Math.min(70, Math.max(12, (bw * bh) / (lw * lw * 45))));
+  const n = many(Math.round(Math.min(70, Math.max(12, (bw * bh) / (lw * lw * 45)))), amount);
   const visible = Math.min(n, Math.floor((t / 1.2) * n) + 1);
 
   ctx.save();
@@ -622,9 +590,9 @@ export function plasma({ ctx, pts, closed, color, color2, t, lw }: FxArgs) {
 }
 
 /** Coloured disco lights wandering over the shape. */
-export function disco({ ctx, pts, closed, color, t, lw, seed }: FxArgs) {
+export function disco({ ctx, pts, closed, color, t, lw, seed, amount }: FxArgs) {
   const colors = [color, ...LIGHT_COLORS.map((c) => c.value)];
-  const n = 7;
+  const n = many(7, amount);
   ctx.globalCompositeOperation = "lighter";
   if (closed) {
     const b = bbox(pts);
@@ -763,7 +731,7 @@ export function scan({ ctx, pts, closed, color, t, lw, dir }: FxArgs) {
 const GLYPHS = graphemes("01アイウエオカキクケコサシスセソタチツテト0123456789");
 
 /** Falling code like in the movies. */
-export function matrix({ ctx, pts, closed, color, t, lw, seed, dir }: FxArgs) {
+export function matrix({ ctx, pts, closed, color, t, lw, seed, dir, amount }: FxArgs) {
   const up = dir === "up";
   const font = lw * 3.2;
   ctx.font = `600 ${font.toFixed(1)}px ui-monospace, Menlo, monospace`;
@@ -775,6 +743,7 @@ export function matrix({ ctx, pts, closed, color, t, lw, seed, dir }: FxArgs) {
   if (!closed) {
     const samples = resample(pts, false, font * 1.4);
     samples.forEach((s, k) => {
+      if (hash01(k * 5.7 + seed) > amount * 2) return;
       const speed = 0.4 + hash01(k * 1.9 + seed) * 0.5;
       const fall = (hash01(k * 2.3 + seed) + t * speed) % 1;
       const y = s.p.y + (up ? -1 : 1) * fall * font * 7;
@@ -791,6 +760,8 @@ export function matrix({ ctx, pts, closed, color, t, lw, seed, dir }: FxArgs) {
   const rows = Math.ceil(b.h / font);
   inside(ctx, pts, () => {
     for (let k = 0; k < cols; k++) {
+      // fewer columns rain for a small amount
+      if (hash01(k * 5.7 + seed) > amount * 2) continue;
       const speed = 5 + hash01(k * 1.31 + seed) * 7; // rows per second
       const head = (hash01(k * 2.7 + seed) * (rows + TRAIL) + t * speed) % (rows + TRAIL);
       const x = b.minX + (k + 0.5) * font;
@@ -926,11 +897,12 @@ export function radar({ ctx, pts, closed, color, t, lw, seed, dir }: FxArgs) {
 }
 
 /** LED pixels switching on and off. */
-export function pixel({ ctx, pts, closed, color, color2, t, lw, seed }: FxArgs) {
+export function pixel({ ctx, pts, closed, color, color2, t, lw, seed, amount }: FxArgs) {
   const cell = lw * 3.5;
+  // amount = share of pixels that are on
   const lit = (i: number) => {
     const rate = 1.5 + hash01(i * 0.37 + seed) * 2;
-    return hash01(i * 1.13 + Math.floor(t * rate + hash01(i * 2.9) * 10) * 7.7 + seed) > 0.5;
+    return hash01(i * 1.13 + Math.floor(t * rate + hash01(i * 2.9) * 10) * 7.7 + seed) < amount;
   };
   const pick = (i: number) => (color2 && hash01(i * 4.1 + seed) > 0.5 ? color2 : color);
   if (!closed) {
@@ -974,12 +946,6 @@ function pulseShape(ctx: CanvasRenderingContext2D, pts: P[], closed: boolean, co
   outlineAt(ctx, moved, closed, 0.75 + glow * 0.25, lw * (1.1 + glow * 0.8));
 }
 
-/** Slowly grows and shrinks, like breathing. */
-export function breathe({ ctx, pts, closed, color, t, lw }: FxArgs) {
-  const b = (Math.sin(t * 1.6 - Math.PI / 2) + 1) / 2;
-  pulseShape(ctx, pts, closed, color, lw, 1 + 0.08 * b, b);
-}
-
 /** Ba-dum … ba-dum. */
 export function heartbeat({ ctx, pts, closed, color, t, lw }: FxArgs) {
   const ph = t % 1.1;
@@ -1011,7 +977,7 @@ export function shake({ ctx, pts, closed, color, t, lw, seed }: FxArgs) {
 }
 
 /** Bubbles rising (or sinking). */
-export function bubbles({ ctx, pts, closed, color, t, lw, seed, dir }: FxArgs) {
+export function bubbles({ ctx, pts, closed, color, t, lw, seed, dir, amount }: FxArgs) {
   const down = dir === "down";
   const bubble = (x: number, y: number, r: number, alpha: number) => {
     ctx.globalAlpha = alpha;
@@ -1027,7 +993,7 @@ export function bubbles({ ctx, pts, closed, color, t, lw, seed, dir }: FxArgs) {
   if (!closed) {
     const samples = resample(pts, false, lw * 5);
     samples.forEach((s, k) => {
-      if (hash01(k * 1.9 + seed) < 0.4) return;
+      if (hash01(k * 1.9 + seed) > amount * 1.2) return;
       const rise = (hash01(k * 2.3 + seed) + t * (0.35 + hash01(k) * 0.3)) % 1;
       const r = lw * (0.8 + hash01(k * 3.1 + seed) * 1.2);
       const x = s.p.x + Math.sin(t * 2 + k) * lw;
@@ -1038,7 +1004,7 @@ export function bubbles({ ctx, pts, closed, color, t, lw, seed, dir }: FxArgs) {
     return;
   }
   const b = bbox(pts);
-  const n = Math.round(Math.min(40, Math.max(8, (b.w * b.h) / (lw * lw * 80))));
+  const n = many(Math.round(Math.min(40, Math.max(8, (b.w * b.h) / (lw * lw * 80)))), amount);
   inside(ctx, pts, () => {
     for (let k = 0; k < n; k++) {
       const h1 = hash01(k * 1.31 + seed);
@@ -1056,12 +1022,12 @@ export function bubbles({ ctx, pts, closed, color, t, lw, seed, dir }: FxArgs) {
 }
 
 /** Fireworks bursting over and over. */
-export function fireworks({ ctx, pts, closed, color, color2, t, lw, seed }: FxArgs) {
+export function fireworks({ ctx, pts, closed, color, color2, t, lw, seed, amount }: FxArgs) {
   const b = bbox(pts);
   const samples = closed ? null : resample(pts, false, 3);
   const total = samples?.[samples.length - 1]?.d ?? 1;
   const period = 1.8;
-  const streams = 3;
+  const streams = Math.max(0, many(3, amount));
   for (let k = 0; k < streams; k++) {
     const local = t + (k * period) / streams;
     const n = Math.floor(local / period);
@@ -1121,7 +1087,30 @@ export function gradient({ ctx, pts, closed, color, color2, t, lw, dir }: FxArgs
 /* ------------------------------------------------------------------ */
 
 /** Scrolling text: a ticker inside shapes, letters running along lines. */
-export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir }: FxArgs) {
+/**
+ * Running text. Plain "distance mod text width" jumps whenever the text gets
+ * wider or narrower (a value going from 9 to 10), and all repetitions behind
+ * it jump too. So each running text keeps its own position, which only moves
+ * by the distance travelled since the last frame, and the spacing of the
+ * repetitions glides to the new width in a few frames. Keyed by font size too,
+ * so the editor and the small Code preview don't disturb each other.
+ */
+const scrolls = new Map<string, { pos: number; last: number; unit: number }>();
+function scroll(key: string, distance: number, unit: number): { off: number; unit: number } {
+  let st = scrolls.get(key);
+  if (!st) {
+    st = { pos: distance, last: distance, unit };
+    scrolls.set(key, st);
+  }
+  const moved = distance - st.last;
+  st.last = distance;
+  st.unit += (unit - st.unit) * 0.06;
+  if (Math.abs(unit - st.unit) < 0.5) st.unit = unit;
+  st.pos = (((st.pos + moved) % st.unit) + st.unit) % st.unit;
+  return { off: st.pos, unit: st.unit };
+}
+
+export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir, id }: FxArgs) {
   const sgn = dir === "right" ? 1 : -1;
   ctx.fillStyle = color;
   ctx.shadowColor = color;
@@ -1132,8 +1121,7 @@ export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir }: FxAr
     const font = Math.max(lw * 3, Math.min(b.h * 0.9, b.h * 0.55 * size));
     ctx.font = `600 ${font.toFixed(1)}px ${FONT}`;
     ctx.textAlign = "left";
-    const unit = ctx.measureText(`${text}   `).width || 1;
-    const off = (((t * font * 2.2 * sgn) % unit) + unit) % unit;
+    const { off, unit } = scroll(`${id}:t:${font.toFixed(0)}`, t * font * 2.2 * sgn, ctx.measureText(`${text}   `).width || 1);
     const y = (b.minY + b.maxY) / 2;
     inside(ctx, pts, () => {
       ctx.globalAlpha = 1;
@@ -1148,10 +1136,9 @@ export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir }: FxAr
   ctx.textAlign = "center";
   const letters = graphemes(`${text}   `);
   const widths = letters.map((l) => ctx.measureText(l).width);
-  const unit = widths.reduce((a, w) => a + w, 0) || 1;
   const samples = resample(pts, false, 2);
   const total = samples[samples.length - 1]?.d ?? 0;
-  const off = (((t * font * 2.2 * sgn) % unit) + unit) % unit;
+  const { off, unit } = scroll(`${id}:l:${font.toFixed(0)}`, t * font * 2.2 * sgn, widths.reduce((a, w) => a + w, 0) || 1);
   ctx.globalAlpha = 1;
   for (let start = -unit + off; start < total; start += unit) {
     let d = start;
@@ -1167,6 +1154,49 @@ export function ticker({ ctx, pts, closed, color, t, lw, size, text, dir }: FxAr
       ctx.restore();
     });
   }
+}
+
+/**
+ * Diagonal stripes full of text, neighbouring stripes running in opposite
+ * directions. The letters are dark (cut out of the light) unless a second
+ * colour is picked. Lines get the normal ticker along the line.
+ */
+export function banner(args: FxArgs) {
+  const { ctx, pts, closed, color, color2, t, lw, size, text, dir, id } = args;
+  if (!closed) {
+    ticker({ ...args, dir: "left" });
+    return;
+  }
+  const b = bbox(pts);
+  const cx = (b.minX + b.maxX) / 2;
+  const cy = (b.minY + b.maxY) / 2;
+  const R = Math.hypot(b.w, b.h) / 2 + lw * 4;
+  const font = Math.max(lw * 3, Math.min(b.w, b.h) * 0.11 * size);
+  const band = font * 1.35;
+  const period = band + font * 0.45;
+  inside(ctx, pts, () => {
+    ctx.translate(cx, cy);
+    ctx.rotate(dir === "down" ? 0.7 : -0.7);
+    ctx.font = `600 ${font.toFixed(1)}px ${FONT}`;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    const width = ctx.measureText(`${text}   `).width || 1;
+    let k = 0;
+    for (let y = -R - period; y < R + period; y += period, k++) {
+      ctx.globalAlpha = 0.95;
+      ctx.fillStyle = color;
+      ctx.fillRect(-R, y, R * 2, band);
+      // every other stripe runs the other way
+      const sgn = k % 2 ? 1 : -1;
+      const { off, unit } = scroll(`${id}:b${k}:${font.toFixed(0)}`, t * font * 1.6 * sgn, width);
+      ctx.globalAlpha = 1;
+      // no second colour: black letters = no light, they look cut out
+      ctx.fillStyle = color2 ?? "#000000";
+      for (let x = -R - unit + off; x < R; x += unit) ctx.fillText(text, x, y + band / 2 + font * 0.04);
+    }
+  });
+  ctx.strokeStyle = color;
+  outlineAt(ctx, pts, true, 0.5, lw * 0.8);
 }
 
 /** A big number (a sensor value, a timer or the clock). */
@@ -1195,4 +1225,140 @@ export function bigNumber({ ctx, pts, closed, color, lw, size, text }: FxArgs) {
   ctx.fillText(text, p.x, p.y - font * 0.7);
   ctx.shadowBlur = 0;
   outlineAt(ctx, pts, false, 0.5, lw);
+}
+
+/* ------------------------------------------------------------------ */
+/* data                                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fills up like a thermometer (lines: a progress bar along the line).
+ * Direction: up = from the bottom, down = from the top, right/left = from
+ * the side; on lines left/down start at the end of the line.
+ */
+export function fillLevel({ ctx, pts, closed, color, t, lw, level, dir }: FxArgs) {
+  ctx.shadowColor = color;
+  if (!closed) {
+    const line = dir === "left" || dir === "down" ? [...pts].reverse() : pts;
+    outlineAt(ctx, line, false, 0.2, lw);
+    if (level <= 0.001) return;
+    const part = subPath(line, false, 0, level);
+    if (part.length < 2) return;
+    ctx.shadowBlur = lw * 4;
+    outlineAt(ctx, part, false, 1, lw * 2.2);
+    const tip = part[part.length - 1];
+    ctx.fillStyle = "#FFFFFF";
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.arc(tip.x, tip.y, lw * 1.4, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  const b = bbox(pts);
+  const horizontal = dir === "right" || dir === "left";
+  // u runs along the surface, v from the side where the filling starts (0) to the other side (1)
+  const at = (u: number, v: number): P => {
+    switch (dir) {
+      case "down":
+        return { x: b.minX + u * b.w, y: b.minY + v * b.h };
+      case "right":
+        return { x: b.minX + v * b.w, y: b.minY + u * b.h };
+      case "left":
+        return { x: b.maxX - v * b.w, y: b.minY + u * b.h };
+      default:
+        return { x: b.minX + u * b.w, y: b.maxY - v * b.h };
+    }
+  };
+  const depth = horizontal ? b.w : b.h;
+  const amp = Math.max(1.5, depth * 0.012) / depth;
+  const surface = (i: number) => at(i / 24, level + Math.sin(i / 3 + t * 2.5) * amp);
+  inside(ctx, pts, () => {
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath();
+    const start = at(0, -0.05);
+    ctx.moveTo(start.x, start.y);
+    for (let i = 0; i <= 24; i++) {
+      const p = surface(i);
+      ctx.lineTo(p.x, p.y);
+    }
+    const end = at(1, -0.05);
+    ctx.lineTo(end.x, end.y);
+    ctx.closePath();
+    ctx.fill();
+    // bright surface line
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = lw * 0.6;
+    ctx.beginPath();
+    for (let i = 0; i <= 24; i++) {
+      const p = surface(i);
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+  });
+  ctx.strokeStyle = color;
+  ctx.shadowBlur = lw * 2;
+  outlineAt(ctx, pts, true, 0.8, lw);
+}
+
+/** The recent values as a curve: inside a shape like a chart, along a line like a wave. */
+export function graph({ ctx, pts, closed, color, lw, series }: FxArgs) {
+  ctx.shadowColor = color;
+  if (series.length < 2) {
+    outlineAt(ctx, pts, closed, 0.3, lw);
+    return;
+  }
+  const n = series.length;
+  if (!closed) {
+    const samples = resample(pts, false, 2);
+    const total = samples[samples.length - 1]?.d ?? 0;
+    const amp = lw * 7;
+    outlineAt(ctx, pts, false, 0.2, lw * 0.7);
+    ctx.shadowBlur = lw * 3;
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = lw * 1.3;
+    ctx.beginPath();
+    series.forEach((v, i) => {
+      const d = (i / (n - 1)) * total;
+      // find the sample (and its normal) at this distance
+      let k = 0;
+      while (k < samples.length - 1 && samples[k].d < d) k++;
+      const s = samples[k];
+      const o = (v - 0.5) * 2 * amp;
+      const x = s.p.x - s.n.x * o;
+      const y = s.p.y - s.n.y * o;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    return;
+  }
+  const b = bbox(pts);
+  const pad = b.h * 0.1;
+  const px = (i: number) => b.minX + (b.w * i) / (n - 1);
+  const py = (v: number) => b.maxY - pad - v * (b.h - pad * 2);
+  inside(ctx, pts, () => {
+    // area under the curve
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath();
+    ctx.moveTo(px(0), b.maxY + 2);
+    series.forEach((v, i) => ctx.lineTo(px(i), py(v)));
+    ctx.lineTo(px(n - 1), b.maxY + 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = lw * 3;
+    ctx.lineWidth = lw * 1.2;
+    ctx.beginPath();
+    series.forEach((v, i) => (i === 0 ? ctx.moveTo(px(i), py(v)) : ctx.lineTo(px(i), py(v))));
+    ctx.stroke();
+    // newest value as a dot
+    ctx.fillStyle = "#FFFFFF";
+    ctx.beginPath();
+    ctx.arc(px(n - 1), py(series[n - 1]), lw * 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.shadowBlur = 0;
+  outlineAt(ctx, pts, true, 0.5, lw * 0.8);
 }

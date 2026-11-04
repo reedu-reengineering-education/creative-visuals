@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 import { aspectRatio, useProject } from "@/lib/store";
 import { useRuntime } from "@/lib/runtime";
 import { renderStage, type View } from "@/lib/render";
-import { useSensors } from "@/lib/sensors";
 import { dist, finishStroke, hitTest } from "@/lib/geometry";
 import type { Point, Project, RuntimeOverride } from "@/lib/types";
 
@@ -21,7 +20,7 @@ interface StageProps {
   /** Strokes to mark with a dashed frame (selected timeline row) */
   highlightIds?: string[];
   /** Use these instead of the stores (output window). */
-  source?: () => { project: Project; overrides: Record<string, RuntimeOverride>; running: boolean };
+  source?: () => { project: Project; overrides: Record<string, RuntimeOverride>; running: boolean; pausedAt?: number | null };
   /** inset in px that must stay free (e.g. under the top bar) – not used for the projection itself */
   className?: string;
 }
@@ -113,6 +112,7 @@ export default function Stage({ view, interaction, onTap, onTwoFingers, onLongPr
             project: useProject.getState().project,
             overrides: useRuntime.getState().overrides,
             running: useRuntime.getState().running,
+            pausedAt: useRuntime.getState().pausedAt,
           };
       const st = useProject.getState();
       const activeGroup = data.project.groups.find((g) => g.id === st.activeGroupId);
@@ -124,14 +124,14 @@ export default function Stage({ view, interaction, onTap, onTwoFingers, onLongPr
         view: p.view,
         width: w,
         height: h,
-        now: Date.now(),
+        // frozen while the program is paused
+        now: data.pausedAt ?? Date.now(),
         selectedId: p.highlightId ?? (p.view === "effects" ? st.selectedStrokeId : null),
         highlightIds: p.highlightIds,
         draft: draft.current,
         draftColor: activeGroup?.color,
         cursor: p.interaction === "draw" ? cursor.current : null,
         cursorColor: st.tool === "eraser" ? "#FFFFFF" : activeGroup?.color,
-        sensors: useSensors.getState().values,
       });
     };
     raf = requestAnimationFrame(frame);

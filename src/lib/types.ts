@@ -28,12 +28,10 @@ export type EffectType =
   | "blink"
   | "chase"
   | "fill"
-  | "water"
   | "sparkle"
   | "wobble"
   | "draw"
   | "radial"
-  | "depth"
   | "neon"
   | "echo"
   | "stripes"
@@ -48,26 +46,22 @@ export type EffectType =
   | "grid"
   | "radar"
   | "pixel"
-  | "breathe"
   | "heartbeat"
   | "shake"
   | "bubbles"
   | "fireworks"
   | "gradient"
   | "text"
+  | "banner"
   | "number"
+  | "level"
+  | "graph"
   | "off";
 
 /** A colour choice: a CSS colour, or a special value resolved per stroke. */
 export type ColorSpec = string | "rainbow" | "group" | "random";
 
 export type Sequence = "together" | "sequential";
-
-export interface EffectAssignment {
-  effect: EffectType;
-  color: ColorSpec;
-  sequence: Sequence;
-}
 
 export type Aspect = "16:9" | "16:10" | "4:3";
 
@@ -76,10 +70,6 @@ export interface Project {
   aspect: Aspect;
   groups: Group[];
   strokes: Stroke[];
-  /** Effect for every stroke of a group. */
-  groupEffects: Record<string, EffectAssignment>;
-  /** Overrides for single strokes ("nur für Nr. 3"). */
-  strokeEffects: Record<string, EffectAssignment>;
   /** Blockly workspace state (serialisation JSON). */
   program: unknown | null;
 }
@@ -107,10 +97,18 @@ export interface EffectParams {
   brightness?: number;
   dir?: Direction;
   color2?: ColorSpec;
-  /** for the "text" effect */
+  /** for the text effects ("text", "banner") */
   text?: string;
-  /** for the "number" effect: a sensor channel id, "timer" or "clock" */
+  /** for the "number" effect: "timer" or "clock" (sensor values are shown with "Zeige …" in code) */
   source?: string;
+  /** set by the program ("zeige …" block): what the "number" effect shows, overrides `source` */
+  value?: string;
+  /** how many particles, 0..1 (0.5 = normal) */
+  amount?: number;
+  /** set by a "Verbinde … → Füllstand" link: fill level 0..1 (without it the shape fills by itself) */
+  level?: number;
+  /** set by a "Verbinde … → Kurve" link: recent values, 0..1, oldest first */
+  series?: number[];
 }
 
 export type Mode = "draw" | "effects" | "code" | "show";
