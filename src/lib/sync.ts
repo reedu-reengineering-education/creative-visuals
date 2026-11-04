@@ -101,5 +101,5 @@ export async function openOutputWindow() {
   } catch {
     /* permission denied or not supported – just open a normal window */
   }
-  window.open("/output", "lichtwerk-output", features);
+  window.open(`${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/output/`, "lichtwerk-output", features);
 }
