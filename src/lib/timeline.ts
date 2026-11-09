@@ -6,7 +6,19 @@
  * timeline; editing the timeline regenerates exactly that script. Everything
  * else stays "code" and is shown as a locked tab.
  */
-import { chainOf, isEnabled, topBlocks, triggerOf, seqOf, ALL, THIS, type BlockJson, type ProgramJson } from "./blockJson";
+import {
+  chainOf,
+  effectContent,
+  isEnabled,
+  topBlocks,
+  triggerOf,
+  seqOf,
+  ALL,
+  SLOT_EFFECTS,
+  THIS,
+  type BlockJson,
+  type ProgramJson,
+} from "./blockJson";
 import { cleanParams, encodeParams, parseParams, sameParams } from "./params";
 import type { Trigger } from "./program";
 import type { ColorSpec, EffectParams, EffectType, Sequence } from "./types";
@@ -116,6 +128,16 @@ export function parseScript(hat: BlockJson): ScriptView | null {
     open.set(key, { id: clipId(key, t), groupId, nr, ...st, params: cleanParams(st.params), start: r2(t), duration: 0 });
   };
 
+  /** settings of an effect block; a fixed text in its slot counts as the text setting */
+  const paramsOf = (b: BlockJson): EffectParams | null => {
+    const content = effectContent(b);
+    // a live value (reading, variable …) can't be shown as a clip
+    if (content.k === "value") return null;
+    const p = parseParams(b.fields?.SET);
+    if (content.k === "text") p.text = content.text;
+    return p;
+  };
+
   for (const b of body) {
     const f = b.fields ?? {};
     if (b.type === "lw_wait") {
@@ -124,12 +146,13 @@ export function parseScript(hat: BlockJson): ScriptView | null {
       t = r2(t + s);
     } else if (b.type === "lw_effect") {
       const gid = String(f.TARGET ?? "");
-      if (!gid || gid === ALL || gid === THIS) return code;
+      const params = paramsOf(b);
+      if (!gid || gid === ALL || gid === THIS || !params) return code;
       const st: State = {
         effect: String(f.EFFECT) as EffectType,
         color: String(f.COLOR) as ColorSpec,
         sequence: seqOf(f.SEQ),
-        params: parseParams(f.SET),
+        params,
       };
       groupState.set(gid, st);
       close(gid);
@@ -138,11 +161,13 @@ export function parseScript(hat: BlockJson): ScriptView | null {
     } else if (b.type === "lw_effect_one") {
       const gid = String(f.GROUP ?? "");
       const nr = Math.max(1, Math.round(Number(f.NR) || 1));
+      const params = paramsOf(b);
+      if (!params) return code;
       const st: State = {
         effect: String(f.EFFECT) as EffectType,
         color: String(f.COLOR) as ColorSpec,
         sequence: "together",
-        params: parseParams(f.SET),
+        params,
       };
       const base = groupState.get(gid) ?? LINE;
       close(rowKey(gid, nr));
@@ -183,18 +208,35 @@ export function isTimelineHat(hat: BlockJson): boolean {
 /* timeline -> blocks                                                  */
 /* ------------------------------------------------------------------ */
 
-function effectBlock(groupId: string, st: State): BlockJson {
+/**
+ * Text effects get their text in the slot on the block ("Laufschrift ⟨Hallo⟩"),
+ * not in the settings; "Zahl" gets an empty slot (stopwatch / clock).
+ */
+export function withContentSlot(b: BlockJson, effect: string, params: EffectParams | undefined): BlockJson {
+  if (!SLOT_EFFECTS.has(effect)) return { ...b, fields: { ...b.fields, SET: encodeParams(params) } };
+  const { text, ...rest } = params ?? {};
   return {
-    type: "lw_effect",
-    fields: { TARGET: groupId, EFFECT: st.effect, COLOR: st.color, SEQ: st.sequence, SET: encodeParams(st.params) },
+    ...b,
+    extraState: { slot: true },
+    fields: { ...b.fields, SET: encodeParams(rest) },
+    ...(effect === "number" ? {} : { inputs: { VALUE: { shadow: { type: "lw_text", fields: { TEXT: text ?? "" } } } } }),
   };
 }
 
+function effectBlock(groupId: string, st: State): BlockJson {
+  return withContentSlot(
+    { type: "lw_effect", fields: { TARGET: groupId, EFFECT: st.effect, COLOR: st.color, SEQ: st.sequence } },
+    st.effect,
+    st.params,
+  );
+}
+
 function itemBlock(groupId: string, nr: number, st: State): BlockJson {
-  return {
-    type: "lw_effect_one",
-    fields: { GROUP: groupId, NR: nr, EFFECT: st.effect, COLOR: st.color, SET: encodeParams(st.params) },
-  };
+  return withContentSlot(
+    { type: "lw_effect_one", fields: { GROUP: groupId, NR: nr, EFFECT: st.effect, COLOR: st.color } },
+    st.effect,
+    st.params,
+  );
 }
 
 function hatFor(trigger: Trigger): BlockJson {

@@ -7,8 +7,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { EFFECTS, EFFECT_CATEGORIES, PICK_COLORS, SPECIAL_COLORS, effectDef, type EffectCategory } from "@/lib/palette";
 import { AMOUNTS, CLOCK, SIZES, SPEEDS, DIRECTIONS, cleanParams, encodeParams, parseParams } from "@/lib/params";
 import { t } from "@/lib/i18n";
-import type { EffectParams, EffectType } from "@/lib/types";
-import { EFFECT_PREVIEW } from "../Icons";
+import type { EffectParams, EffectType, Sequence } from "@/lib/types";
+import { EFFECT_PREVIEW, IconSequential, IconTogether } from "../Icons";
 import EffectSettings from "../EffectSettings";
 
 /**
@@ -150,7 +150,12 @@ const short = (s: string, n: number) => {
 };
 
 /** What the field shows on the block: ⚙ plus everything that isn't the default. */
-export function settingsSummary(effect: EffectType, p: EffectParams, hide: (keyof EffectParams)[] = []): string {
+export function settingsSummary(
+  effect: EffectType,
+  p: EffectParams,
+  hide: (keyof EffectParams)[] = [],
+  sequence?: Sequence,
+): string {
   const def = effectDef(effect);
   const uses = new Set((def?.uses ?? []).filter((u) => !hide.includes(u)));
   const parts: string[] = [];
@@ -174,6 +179,8 @@ export function settingsSummary(effect: EffectType, p: EffectParams, hide: (keyo
     parts.push(DIRECTIONS.find((d) => d.value === p.dir)?.arrow ?? "");
   }
   if (uses.has("color2") && p.color2) parts.push("+●");
+  // the same mark as on timeline clips
+  if (sequence === "sequential") parts.push("›››");
   return parts.length ? `⚙ ${parts.join(" ")}` : "⚙";
 }
 
@@ -182,13 +189,19 @@ function SettingsPopup({
   initial,
   onChange,
   hide,
+  sequence,
+  onSequence,
 }: {
   effect: EffectType;
   initial: EffectParams;
   onChange: (p: EffectParams) => void;
   hide?: (keyof EffectParams)[];
+  /** "Alle zugleich / Nacheinander" for blocks that steer a whole group; undefined = not offered */
+  sequence?: Sequence;
+  onSequence?: (s: Sequence) => void;
 }) {
   const [params, setParams] = useState(initial);
+  const [seq, setSeq] = useState(sequence);
   const def = effectDef(effect);
   return (
     <div className="lw-settings" aria-label={t("param.settings")}>
@@ -205,6 +218,27 @@ function SettingsPopup({
           onChange(c);
         }}
       />
+      {seq && (
+        <div className="section">
+          <div className="switch" role="radiogroup" aria-label={t("effects.sequence")}>
+            {(["together", "sequential"] as Sequence[]).map((s) => (
+              <button
+                key={s}
+                role="radio"
+                aria-checked={seq === s}
+                className={seq === s ? "on" : ""}
+                onClick={() => {
+                  setSeq(s);
+                  onSequence?.(s);
+                }}
+              >
+                {s === "together" ? <IconTogether /> : <IconSequential />}
+                {t(s === "together" ? "effects.together" : "effects.sequential")}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -225,7 +259,28 @@ export class FieldSettings extends Blockly.FieldTextInput {
 
   /** Does the effect have anything to set here? */
   hasSettings(): boolean {
-    return (effectDef(this.effect())?.uses ?? []).some((u) => !this.hide.includes(u));
+    const hidden = this.hidden();
+    return this.sequence() !== undefined || (effectDef(this.effect())?.uses ?? []).some((u) => !hidden.includes(u));
+  }
+
+  /**
+   * The block's "zugleich / nacheinander" (its hidden SEQ field) is set here,
+   * not on the block. Not offered for "Aus", nor while a live value is shown
+   * (that has no order).
+   */
+  private sequence(): Sequence | undefined {
+    const b = this.getSourceBlock();
+    const seq = b?.getField("SEQ");
+    if (!b || !seq || this.effect() === "off") return undefined;
+    const plugged = b.getInput("VALUE")?.connection?.targetBlock();
+    if (plugged && !plugged.isShadow()) return undefined;
+    return seq.getValue() === "sequential" ? "sequential" : "together";
+  }
+
+  /** A value in the block's content slot ("Zahl ⟨Messwert⟩") replaces the text and the stopwatch / clock. */
+  hidden(): (keyof EffectParams)[] {
+    const plugged = this.getSourceBlock()?.getInput("VALUE")?.connection?.targetBlock();
+    return plugged && !plugged.isShadow() ? [...this.hide, "text", "source"] : this.hide;
   }
 
   private effect(): EffectType {
@@ -238,7 +293,7 @@ export class FieldSettings extends Blockly.FieldTextInput {
   }
 
   protected override getText_(): string {
-    return settingsSummary(this.effect(), parseParams(this.getValue()), this.hide);
+    return settingsSummary(this.effect(), parseParams(this.getValue()), this.hidden(), this.sequence());
   }
 
   protected override showEditor_() {
@@ -251,8 +306,13 @@ export class FieldSettings extends Blockly.FieldTextInput {
         <SettingsPopup
           effect={this.effect()}
           initial={parseParams(this.getValue())}
-          hide={this.hide}
+          hide={this.hidden()}
           onChange={(p) => this.setValue(encodeParams(p))}
+          sequence={this.sequence()}
+          onSequence={(s) => {
+            this.getSourceBlock()?.setFieldValue(s, "SEQ");
+            this.forceRerender();
+          }}
         />,
       ),
     );

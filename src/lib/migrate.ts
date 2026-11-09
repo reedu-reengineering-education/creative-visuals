@@ -10,14 +10,17 @@
  * - Merged effects: Tiefe → Echo (inwards), Atmen → Leuchten,
  *   Wasser → Füllstand (fills by itself).
  * - Data effects no longer pick a sensor themselves: a "Zahl" with a sensor
- *   becomes "Zeige ⟨Messwert⟩ auf …"; Füllstand/Kurve lose the sensor (they
- *   are connected with "Verbinde" in code now).
+ *   gets the reading in its slot; Füllstand/Kurve lose the sensor (they are
+ *   connected with "Setze …" / "Verbinde" in code now).
+ * - Text effects carry their content in a slot on the block: the text moves
+ *   from the settings into it, and "Zeige ⟨Wert⟩ als … auf …" becomes the
+ *   effect block with the value in its slot.
  * - The start show always repeats (the effects mode has no "Wiederholen"
  *   switch any more).
  */
 import { topBlocks, type BlockJson, type ProgramJson } from "./blockJson";
 import { encodeParams, parseParams } from "./params";
-import { emptyProgram, emptyTimeline, nextScriptY, parseProgram, upsertTimeline, type Clip } from "./timeline";
+import { emptyProgram, emptyTimeline, nextScriptY, parseProgram, upsertTimeline, withContentSlot, type Clip } from "./timeline";
 import type { ColorSpec, EffectParams, EffectType, Project, Sequence } from "./types";
 
 interface StaticEffect {
@@ -101,19 +104,35 @@ function migrateBlock(b: BlockJson): BlockJson {
     case "lw_effect":
     case "lw_effect_one": {
       const sensor = sensorSourceOf(f.SET);
-      if (f.EFFECT === "number" && sensor) {
-        const target = out.type === "lw_effect" ? f.TARGET : f.GROUP;
+      const m = migrateEffect(String(f.EFFECT ?? "glow"), parseParams(f.SET));
+      if (m.effect === "number" && sensor) {
+        const { source: _source, ...rest } = m.params;
         return {
-          type: "lw_show_value",
-          ...(out.id ? { id: out.id } : {}),
-          ...(out.next ? { next: out.next } : {}),
-          fields: { TARGET: target, COLOR: f.COLOR },
-          inputs: { VALUE: { block: { type: "lw_sensor_value", fields: { SENSOR: sensor } } } },
+          ...out,
+          extraState: { slot: true },
+          fields: { ...f, EFFECT: "number", SET: encodeParams(rest) },
+          inputs: { ...out.inputs, VALUE: { block: { type: "lw_sensor_value", fields: { SENSOR: sensor } } } },
         };
       }
-      if (typeof f.EFFECT !== "string" || !MERGED[f.EFFECT]) return out;
-      const m = migrateEffect(f.EFFECT, parseParams(f.SET));
-      return { ...out, fields: { ...f, EFFECT: m.effect, SET: encodeParams(m.params) } };
+      // already has its slot
+      if ((out.extraState as { slot?: unknown } | undefined)?.slot) return out;
+      return withContentSlot({ ...out, fields: { ...f, EFFECT: m.effect } }, m.effect, m.params);
+    }
+    case "lw_show_value": {
+      const { text: _text, source: _source, value: _value, ...rest } = parseParams(f.SET);
+      return {
+        ...out,
+        type: "lw_effect",
+        extraState: { slot: true },
+        fields: {
+          TARGET: f.TARGET,
+          // older blocks have no effect field: they showed a big number
+          EFFECT: f.EFFECT === "text" || f.EFFECT === "banner" ? f.EFFECT : "number",
+          COLOR: f.COLOR ?? "#FFD98A",
+          SEQ: "together",
+          SET: encodeParams(rest),
+        },
+      };
     }
     default:
       return out;

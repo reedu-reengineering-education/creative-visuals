@@ -3,7 +3,8 @@ import { FieldColorGrid, FieldEffectGrid, FieldSettings } from "./gridFields";
 import { t, type TKey } from "@/lib/i18n";
 import { EFFECTS, PICK_COLORS, SPECIAL_COLORS, effectDef } from "@/lib/palette";
 import { SIZES, SPEEDS, encodeParams, parseParams } from "@/lib/params";
-import { BUTTONS, SHOW_EFFECTS, type LinkProp } from "@/lib/program";
+import { BUTTONS, type LinkProp } from "@/lib/program";
+import { SLOT_EFFECTS } from "@/lib/blockJson";
 import { buttonLabel } from "@/lib/buttons";
 import type { EffectType } from "@/lib/types";
 import { useProject } from "@/lib/store";
@@ -28,7 +29,6 @@ function groupOptions(extra: { all?: boolean; self?: boolean } = {}): () => Opt[
 }
 
 const effectOptions = (): Opt[] => EFFECTS.map((e) => [t(e.key), e.value]);
-const showEffectOptions = (): Opt[] => SHOW_EFFECTS.map((v): Opt => [t(`effect.${v}`), v]);
 const colorOptions = (): Opt[] => [
   ...PICK_COLORS.map((c): Opt => [t(c.key), c.value]),
   ...SPECIAL_COLORS.map((c): Opt => [t(c.key), c.value]),
@@ -187,7 +187,7 @@ const num = (v: number, min?: number, max?: number, precision?: number) =>
  * Keeps the ⚙ field of an effect block in step with its effect: hidden for
  * effects without settings, a starter text for "Laufschrift", fresh summary.
  */
-function syncSettings(block: Blockly.Block, e: Blockly.Events.Abstract, starterText = true) {
+function syncSettings(block: Blockly.Block, e: Blockly.Events.Abstract) {
   const field = block.getField("SET");
   if (!field || block.isInFlyout) return;
   const effect = block.getFieldValue("EFFECT") as EffectType;
@@ -198,15 +198,88 @@ function syncSettings(block: Blockly.Block, e: Blockly.Events.Abstract, starterT
     changed = true;
   }
   if (e instanceof Blockly.Events.BlockChange && e.blockId === block.id && e.name === "EFFECT") {
-    const p = parseParams(field.getValue());
-    if (starterText && effectDef(effect)?.uses.includes("text") && !p.text) {
-      field.setValue(encodeParams({ ...p, text: t("param.text.default") }));
-    }
     field.forceRerender();
     changed = true;
   }
   if (changed && block instanceof Blockly.BlockSvg) block.queueRender();
 }
+
+/**
+ * The content slot of the effect blocks: "Laufschrift ⟨Hallo⟩", "Zahl ⟨Messwert⟩".
+ * Text effects get a slot with a text to type into, and anything that gives a
+ * value (a reading, a variable, "Text aus …") can be dropped onto it. "Zahl"
+ * gets an empty slot: empty = stopwatch / clock from the settings. Other
+ * effects have no slot. Whether there is a slot is saved as extra state, so
+ * Blockly creates the input before it loads what is plugged in.
+ */
+type SlotBlock = Blockly.Block & { setSlot_(on: boolean): void; slotReal_?: boolean };
+
+const contentSlot = {
+  setSlot_(this: SlotBlock, on: boolean) {
+    const input = this.getInput("VALUE");
+    if (on === !!input) return;
+    if (on) {
+      this.appendValueInput("VALUE").setCheck(["Number", "String"]);
+      this.moveInputBefore("VALUE", "TAIL");
+      return;
+    }
+    const child = input?.connection?.targetBlock();
+    // a block plugged into the slot falls out instead of being deleted
+    if (child && !child.isShadow()) {
+      child.unplug();
+      if (child instanceof Blockly.BlockSvg) child.bumpNeighbours();
+    }
+    input?.connection?.setShadowState(null);
+    this.removeInput("VALUE");
+  },
+  saveExtraState(this: SlotBlock) {
+    return this.getInput("VALUE") ? { slot: true } : null;
+  },
+  loadExtraState(this: SlotBlock, state: { slot?: boolean } | null) {
+    this.setSlot_(!!state?.slot);
+  },
+  /** After the effect changed (or a block without slot was loaded): make the slot fit the effect. */
+  onchange(this: SlotBlock, e: Blockly.Events.Abstract) {
+    syncSettings(this, e);
+    if (this.isInFlyout || !(this instanceof Blockly.BlockSvg) || this.isDeadOrDying()) return;
+    const effect = this.getFieldValue("EFFECT") as string;
+    const want = SLOT_EFFECTS.has(effect);
+    const conn = this.getInput("VALUE")?.connection;
+    const shadow = !!conn?.getShadowState();
+    const plugged = conn?.targetBlock();
+    const real = !!plugged && !plugged.isShadow();
+    // the ⚙ summary depends on what is in the slot (see FieldSettings.hidden)
+    const set = this.getField("SET");
+    if (set instanceof FieldSettings && this.slotReal_ !== real) {
+      this.slotReal_ = real;
+      set.setVisible(set.hasSettings());
+      set.forceRerender();
+    }
+    const needsText = want && effect !== "number" && !shadow;
+    // "Zahl": an empty slot means stopwatch / clock, so a leftover text goes
+    const dropText = want && effect === "number" && shadow && !real;
+    if (want === !!conn && !needsText && !dropText) return;
+
+    const group = Blockly.Events.getGroup();
+    Blockly.Events.setGroup(e.group || true);
+    const before = Blockly.Events.BlockChange.getExtraBlockState_(this);
+    this.setSlot_(want);
+    const slot = this.getInput("VALUE")?.connection;
+    if (slot && effect === "number" && !real) slot.setShadowState(null);
+    if (slot && effect !== "number" && !slot.getShadowState()) {
+      // the text of an older block sits in its settings
+      const set = this.getField("SET");
+      const p = parseParams(set?.getValue());
+      slot.setShadowState({ type: "lw_text", fields: { TEXT: p.text ?? t("param.text.default") } });
+      if (p.text && set) set.setValue(encodeParams({ ...p, text: undefined }));
+    }
+    const after = Blockly.Events.BlockChange.getExtraBlockState_(this);
+    if (before !== after) {
+      Blockly.Events.fire(new (Blockly.Events.get(Blockly.Events.BLOCK_CHANGE))(this, "mutation", null, before, after));
+    }
+    Blockly.Events.setGroup(group || false);
+  },
+};
 
 /* ---------- renderer: zelos with dark text and light "slots" ---------- */
 
@@ -573,39 +646,70 @@ export function registerBlocks() {
     },
   };
 
+  /** ⚙ of effect blocks: the text is in the slot on the block, not in the settings */
+  const settingsField = () => {
+    const f = new FieldSettings();
+    f.hide = ["text"];
+    return f;
+  };
+
   Blockly.Blocks["lw_effect"] = {
+    ...contentSlot,
     init(this: Blockly.Block) {
-      row(this, "block.effect", [
-        ["TARGET", dd(groupOptions({ all: true, self: true }))],
-        ["EFFECT", new FieldEffectGrid(effectOptions as Blockly.MenuGeneratorFunction)],
-        ["COLOR", new FieldColorGrid(colorOptions as Blockly.MenuGeneratorFunction)],
-        ["SEQ", dd(seqOptions)],
-        ["SET", new FieldSettings()],
-      ]);
+      row(
+        this,
+        "block.effectHead",
+        [
+          ["TARGET", dd(groupOptions({ all: true, self: true }))],
+          ["EFFECT", new FieldEffectGrid(effectOptions as Blockly.MenuGeneratorFunction)],
+        ],
+        "HEAD",
+      );
+      row(
+        this,
+        "block.effectTail",
+        [
+          ["COLOR", new FieldColorGrid(colorOptions as Blockly.MenuGeneratorFunction)],
+          ["SEQ", dd(seqOptions)],
+          ["SET", settingsField()],
+        ],
+        "TAIL",
+      );
+      // "zugleich / nacheinander" is set in ⚙ (FieldSettings), the field only keeps the value
+      this.getField("SEQ")?.setVisible(false);
+      this.setInputsInline(true);
       this.setPreviousStatement(true);
       this.setNextStatement(true);
       this.setStyle("effects");
-    },
-    onchange(this: Blockly.Block, e: Blockly.Events.Abstract) {
-      syncSettings(this, e);
     },
   };
 
   Blockly.Blocks["lw_effect_one"] = {
+    ...contentSlot,
     init(this: Blockly.Block) {
-      row(this, "block.effectOne", [
-        ["GROUP", dd(groupOptions())],
-        ["NR", num(1, 1, 999, 1)],
-        ["EFFECT", new FieldEffectGrid(effectOptions as Blockly.MenuGeneratorFunction)],
-        ["COLOR", new FieldColorGrid(colorOptions as Blockly.MenuGeneratorFunction)],
-        ["SET", new FieldSettings()],
-      ]);
+      row(
+        this,
+        "block.effectOneHead",
+        [
+          ["GROUP", dd(groupOptions())],
+          ["NR", num(1, 1, 999, 1)],
+          ["EFFECT", new FieldEffectGrid(effectOptions as Blockly.MenuGeneratorFunction)],
+        ],
+        "HEAD",
+      );
+      row(
+        this,
+        "block.effectTail",
+        [
+          ["COLOR", new FieldColorGrid(colorOptions as Blockly.MenuGeneratorFunction)],
+          ["SET", settingsField()],
+        ],
+        "TAIL",
+      );
+      this.setInputsInline(true);
       this.setPreviousStatement(true);
       this.setNextStatement(true);
       this.setStyle("effects");
-    },
-    onchange(this: Blockly.Block, e: Blockly.Events.Abstract) {
-      syncSettings(this, e);
     },
   };
 
@@ -787,31 +891,21 @@ export function registerBlocks() {
   };
 
   /**
-   * "Zeige ⟨Wert⟩ als [Zahl|Laufschrift|Textbänder] auf [Gruppe] in [Farbe] ⚙".
-   * The value can be a number or a text; it keeps updating while it is shown.
-   * Older blocks have no EFFECT field and get the first option (Zahl).
+   * "Setze [Tempo] von [Gruppe] auf ⟨…⟩": the simple link. A sensor dropped
+   * in directly is scaled from its typical range, numbers and variables count
+   * 0..100. Like "Verbinde …" it keeps steering until its script ends.
    */
-  Blockly.Blocks["lw_show_value"] = {
+  Blockly.Blocks["lw_set_prop"] = {
     init(this: Blockly.Block) {
-      rowWithInputs(this, "block.showValue", [valIn("VALUE")]);
-      this.appendEndRowInput();
-      const effect = new FieldEffectGrid(showEffectOptions as Blockly.MenuGeneratorFunction);
-      effect.only = SHOW_EFFECTS;
-      const settings = new FieldSettings();
-      // the block brings its own content
-      settings.hide = ["text", "source"];
-      row(this, "block.showAs", [
-        ["EFFECT", effect],
+      rowWithInputs(this, "block.setProp", [
+        ["PROP", dd(linkPropOptions)],
         ["TARGET", dd(groupOptions({ all: true, self: true }))],
-        ["COLOR", new FieldColorGrid(colorOptions as Blockly.MenuGeneratorFunction)],
-        ["SET", settings],
+        numIn("VALUE"),
       ]);
       this.setPreviousStatement(true);
       this.setNextStatement(true);
-      this.setStyle("effects");
-    },
-    onchange(this: Blockly.Block, e: Blockly.Events.Abstract) {
-      syncSettings(this, e, false);
+      this.setStyle("links");
+      this.setTooltip(() => t("block.setProp.tip"));
     },
   };
 
@@ -960,11 +1054,22 @@ const join = (...parts: (string | Conn)[]): { block: Blockly.serialization.block
     inputs: Object.fromEntries(parts.map((p, i) => [`ITEM${i}`, typeof p === "string" ? txt(p) : { ...txt(""), ...p }])),
   },
 });
-const show = (target: string, effect: string, value: Conn, color = "#FFD98A") => ({
+/** An effect with something in its content slot ("Laufschrift ⟨Hallo⟩", "Zahl ⟨Messwert⟩"). */
+const slotFx = (target: string, effect: string, value: Conn | null, color = "#FFFFFF") => ({
   kind: "block",
-  type: "lw_show_value",
+  type: "lw_effect",
+  extraState: { slot: true },
   fields: { TARGET: target, EFFECT: effect, COLOR: color },
-  inputs: { VALUE: value },
+  ...(value ? { inputs: { VALUE: value } } : {}),
+});
+/** a text slot with a block in it: taking the block out leaves an empty text to type into */
+const overText = (c: Conn): Conn => ({ ...txt(""), ...c });
+/** "Setze [Tempo] von … auf ⟨Messwert⟩" (a number stays behind when the reading is taken out) */
+const setProp = (prop: LinkProp, target: string, sensor: string) => ({
+  kind: "block",
+  type: "lw_set_prop",
+  fields: { PROP: prop, TARGET: target },
+  inputs: { VALUE: { ...n(50), ...reading(sensor) } },
 });
 const linkBlock = (sensor: string, inMin: number, inMax: number, prop: LinkProp, target: string, from: string, to: string) => ({
   kind: "block",
@@ -979,7 +1084,12 @@ const condHat = (type: string, sensor: string, op: string, v: number) => ({
   type,
   inputs: { COND: { block: { type: "lw_compare", fields: { OP: op }, inputs: { A: reading(sensor), B: n(v) } } } },
 });
+const label = (key: TKey) => ({ kind: "label", text: t(key) });
 
+/**
+ * Kept short on purpose: one example per idea, no block in two places
+ * except "Wenn ⟨Abstand < 30⟩", which kids also look for under Sensoren.
+ */
 export function toolbox(): Blockly.utils.toolbox.ToolboxDefinition {
   const groups = useProject.getState().project.groups;
   const g = groups[1]?.id ?? groups[0]?.id ?? ALL;
@@ -993,9 +1103,9 @@ export function toolbox(): Blockly.utils.toolbox.ToolboxDefinition {
         ...cat("events"),
         contents: [
           { kind: "block", type: "lw_on_start" },
+          { kind: "block", type: "lw_on_button", fields: { BUTTON: "1" } },
           condHat("lw_when", "distance", "<", 30),
           condHat("lw_while", "temperature", ">", 20),
-          { kind: "block", type: "lw_on_button", fields: { BUTTON: "1" } },
           { kind: "block", type: "lw_on_key" },
         ],
       },
@@ -1005,9 +1115,9 @@ export function toolbox(): Blockly.utils.toolbox.ToolboxDefinition {
         categorystyle: "loops",
         ...cat("loops"),
         contents: [
-          { kind: "block", type: "lw_for_each", fields: { GROUP: g } },
-          { kind: "block", type: "lw_repeat" },
           { kind: "block", type: "lw_forever" },
+          { kind: "block", type: "lw_repeat" },
+          { kind: "block", type: "lw_for_each", fields: { GROUP: g } },
           { kind: "block", type: "lw_repeat_until" },
         ],
       },
@@ -1017,8 +1127,7 @@ export function toolbox(): Blockly.utils.toolbox.ToolboxDefinition {
         categorystyle: "wait",
         ...cat("wait"),
         contents: [
-          { kind: "block", type: "lw_wait", fields: { SECONDS: 0.3 } },
-          { kind: "block", type: "lw_wait_random" },
+          { kind: "block", type: "lw_wait", fields: { SECONDS: 1 } },
           { kind: "block", type: "lw_wait_until" },
         ],
       },
@@ -1032,10 +1141,7 @@ export function toolbox(): Blockly.utils.toolbox.ToolboxDefinition {
           { kind: "block", type: "lw_effect", fields: { TARGET: g, EFFECT: "blink", COLOR: "#FFD98A" } },
           { kind: "block", type: "lw_effect_one", fields: { GROUP: g, NR: 1, EFFECT: "fill", COLOR: "#FFD98A" } },
           { kind: "block", type: "lw_effect", fields: { TARGET: g, EFFECT: "plasma", COLOR: "#B07CFF", SET: encodeParams({ speed: 2 }) } },
-          { kind: "block", type: "lw_effect", fields: { TARGET: g, EFFECT: "text", COLOR: "#FFFFFF", SET: encodeParams({ text: t("param.text.default") }) } },
-          { kind: "block", type: "lw_effect", fields: { TARGET: g, EFFECT: "banner", COLOR: "#FFFFFF", SET: encodeParams({ text: t("param.text.default") }) } },
-          { kind: "block", type: "lw_effect", fields: { TARGET: g, EFFECT: "level", COLOR: "#FF6B5E", SET: encodeParams({ source: "temperature" }) } },
-          show(g, "number", n(0)),
+          slotFx(g, "text", txt(t("param.text.default"))),
           { kind: "block", type: "lw_effect", fields: { TARGET: ALL, EFFECT: "off", COLOR: "#FFFFFF" } },
         ],
       },
@@ -1045,28 +1151,37 @@ export function toolbox(): Blockly.utils.toolbox.ToolboxDefinition {
         categorystyle: "text",
         ...cat("text"),
         contents: [
-          show(g, "text", join(t("text.sample.before"), reading("temperature"), t("text.sample.after")), "#FFFFFF"),
-          show(g, "banner", txt(t("text.sample.hello")), "#FFFFFF"),
-          show(g, "number", reading("temperature")),
-          { kind: "block", ...join(t("text.sample.before"), reading("temperature"), t("text.sample.after")).block },
-          { kind: "block", ...join("", "").block },
+          label("block.label.slot"),
+          slotFx(g, "text", txt(t("text.sample.hello"))),
+          slotFx(g, "banner", txt(t("text.sample.hello"))),
+          slotFx(g, "text", overText(join(t("text.sample.before"), reading("temperature"), t("text.sample.after")))),
+          slotFx(g, "number", reading("temperature"), "#FFD98A"),
           { kind: "block", type: "lw_text", fields: { TEXT: t("text.sample.hello") } },
+          { kind: "block", ...join(t("text.sample.before"), reading("temperature"), t("text.sample.after")).block },
         ],
       },
       {
         kind: "category",
-        name: t("block.cat.links"),
-        categorystyle: "links",
-        ...cat("links"),
+        name: t("block.cat.sensors"),
+        categorystyle: "sensors",
+        ...cat("sensors"),
         contents: [
+          { kind: "block", type: "lw_sensor_value", fields: { SENSOR: "temperature" } },
+          label("block.label.setProp"),
+          setProp("speed", g, "distance"),
+          setProp("color", g, "temperature"),
+          setProp("brightness", g, "humidity"),
+          setProp("level", g, "distance"),
+          slotFx(g, "number", reading("temperature"), "#FFD98A"),
+          condHat("lw_when", "distance", "<", 30),
+          {
+            kind: "block",
+            type: "lw_compare",
+            fields: { OP: "<" },
+            inputs: { A: reading("distance"), B: n(50) },
+          },
+          label("block.label.exact"),
           linkBlock("distance", 200, 20, "speed", g, "0.5", "3.5"),
-          linkBlock("temperature", 15, 30, "color", g, "#5C9DFF", "#FF6B5E"),
-          linkBlock("distance", 200, 20, "size", g, "0.6", "2.4"),
-          linkBlock("humidity", 40, 90, "brightness", g, "0.25", "1"),
-          linkBlock("humidity", 40, 90, "amount", g, "0.1", "1"),
-          linkBlock("distance", 200, 20, "level", g, "0", "1"),
-          linkBlock("temperature", 15, 35, "graph", g, "0", "1"),
-          condHat("lw_while", "temperature", ">", 20),
         ],
       },
       {
@@ -1078,31 +1193,10 @@ export function toolbox(): Blockly.utils.toolbox.ToolboxDefinition {
           { kind: "block", type: "lw_if_then" },
           { kind: "block", type: "lw_if_then_else" },
           { kind: "block", type: "lw_compare", fields: { OP: ">" }, inputs: { A: n(0), B: n(10) } },
-          { kind: "block", type: "lw_compare", fields: { OP: "=" }, inputs: { A: n(0), B: n(3) } },
           { kind: "block", type: "lw_logic", fields: { OP: "and" } },
-          { kind: "block", type: "lw_logic", fields: { OP: "or" } },
-          { kind: "block", type: "lw_not" },
           { kind: "block", type: "lw_arith", fields: { OP: "+" }, inputs: { A: n(1), B: n(1) } },
-          { kind: "block", type: "lw_arith", fields: { OP: "*" }, inputs: { A: n(2), B: n(3) } },
           { kind: "block", type: "lw_random", inputs: { MIN: n(1), MAX: n(6) } },
           { kind: "block", type: "lw_num", fields: { NUM: 10 } },
-        ],
-      },
-      {
-        kind: "category",
-        name: t("block.cat.sensors"),
-        categorystyle: "sensors",
-        ...cat("sensors"),
-        contents: [
-          condHat("lw_when", "distance", "<", 30),
-          condHat("lw_while", "humidity", ">", 70),
-          { kind: "block", type: "lw_sensor_value", fields: { SENSOR: "temperature" } },
-          {
-            kind: "block",
-            type: "lw_compare",
-            fields: { OP: "<" },
-            inputs: { A: { block: { type: "lw_sensor_value", fields: { SENSOR: "distance" } } }, B: n(50) },
-          },
         ],
       },
       {
@@ -1134,13 +1228,8 @@ export function variablesFlyout(ws: Blockly.WorkspaceSvg): Blockly.utils.toolbox
   items.push(
     { kind: "block", type: "lw_var_set", fields: field, inputs: { VALUE: n(0) } },
     { kind: "block", type: "lw_var_change", fields: field, inputs: { VALUE: n(1) } },
-    { kind: "block", type: "lw_show_value", fields: { TARGET: ALL, COLOR: "#FFD98A" }, inputs: { VALUE: { block: { type: "lw_var_get", fields: field } } } },
-    {
-      kind: "block",
-      type: "lw_show_value",
-      fields: { TARGET: ALL, EFFECT: "text", COLOR: "#FFFFFF" },
-      inputs: { VALUE: join(t("text.sample.points"), { block: { type: "lw_var_get", fields: field } }) },
-    },
+    slotFx(ALL, "number", { block: { type: "lw_var_get", fields: field } }, "#FFD98A"),
+    slotFx(ALL, "text", overText(join(t("text.sample.points"), { block: { type: "lw_var_get", fields: field } }))),
   );
   for (const v of vars) items.push({ kind: "block", type: "lw_var_get", fields: { VAR: { id: v.getId() } } });
   return items;
